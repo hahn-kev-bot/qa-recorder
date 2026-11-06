@@ -39,7 +39,13 @@ The tool opens the built-in example project (`--no-example` to skip that), then:
 | F9 | drag a region, then write a note about it |
 | F7 | a general note |
 
-Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and free text. Close the app or press Ctrl+C to finish.
+Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and free text, and is written to disk as soon as you
+save it. Esc cancels a capture. ⇄ moves the toolbar to the other side.
+
+The toolbar is invisible to the app: it swallows its own clicks, keys and focus changes before the app's listeners
+run, so an open popup or menu stays open while you capture a note about it.
+
+To finish, click **Finish** twice (it closes the app), close the app, or press Ctrl+C in the terminal.
 
 ## Session folder
 
@@ -69,7 +75,7 @@ launch; for older builds the tool navigates home after attaching. A session stil
 
 ```sh
 npm run check   # syntax
-npm run smoke   # Windows: launches the latest develop build, acts as a tester, checks the session folder
+npm run smoke   # Windows: launches the latest develop build, acts as a tester (including a note on an open popup), checks the session folder
 ```
 
 ## Not yet

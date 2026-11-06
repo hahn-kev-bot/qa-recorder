@@ -32,11 +32,18 @@ export async function runSession({ launcher, sessionDir, session, openExample = 
     log(`  note ${id} (${note.kind}) saved`);
     return { id, count: notes.length };
   });
+  let finishRequested;
+  const finished = new Promise(resolve => { finishRequested = resolve; });
+  await context.exposeBinding('__fwliteQaFinish', () => { finishRequested(); });
   await context.addInitScript({ content: overlaySource });
 
   const watch = p => {
     p.on('console', m => {
-      if (m.type() === 'error' || m.type() === 'warning') record(`console.${m.type()}`, { text: m.text().slice(0, 2000) });
+      if (m.type() !== 'error' && m.type() !== 'warning') return;
+      // the MAUI host serves no favicon, so WebView2's automatic request fails on every navigation
+      if (m.location()?.url?.endsWith('/favicon.ico')) return;
+      // "Failed to load resource" only names the URL in its location
+      record(`console.${m.type()}`, { text: m.text().slice(0, 2000), source: m.location()?.url || undefined });
     });
     p.on('pageerror', e => record('pageerror', { text: String(e.stack ?? e).slice(0, 4000) }));
     p.on('requestfailed', r => record('requestfailed', { url: r.url(), error: r.failure()?.errorText }));
@@ -55,11 +62,12 @@ export async function runSession({ launcher, sessionDir, session, openExample = 
   await flush();
   onReady?.();
 
-  log('\nQA session running. Use the toolbar in the bottom-left corner of the app:');
+  log('\nQA session running. Use the toolbar at the bottom of the app (⇄ moves it to the other side):');
   log('  F8 pick an element · F9 drag a region · F7 general note');
-  log('Close the app or press Ctrl+C here to finish.\n');
+  log('Each note is saved as soon as you save it. To finish: the Finish button, closing the app, or Ctrl+C here.\n');
 
   await new Promise(resolve => {
+    finished.then(resolve);
     launcher.child.once('exit', resolve);
     browser.once('disconnected', resolve);
     process.once('SIGINT', resolve);

@@ -1,5 +1,9 @@
 // Injected into the app page by the harness. Plain browser script, no imports: it runs via addInitScript/evaluate.
 // Notes go to the harness through the window.__fwliteQaNote binding, which takes the screenshots.
+//
+// The page must not notice the toolbar: popovers and dialogs close on pointerdown or focus "outside" them, and a
+// click on the toolbar is outside. So a window capture listener, which runs before any of the app's listeners,
+// swallows every event that involves the toolbar and hands it to the toolbar's own handlers instead.
 (() => {
   if (window.top !== window || window.__fwliteQa) return;
   window.__fwliteQa = true;
@@ -10,10 +14,43 @@
     { id: 'idea', label: '💡 Idea' },
     { id: 'like', label: '👍 Like' },
   ];
+  const HOTKEYS = { F7: 'note', F8: 'element', F9: 'region' };
+  const SHIELDED = ['pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave',
+    'mousedown', 'mouseup', 'mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'click', 'dblclick',
+    'contextmenu', 'wheel', 'touchstart', 'touchend', 'touchmove', 'focusin', 'focusout', 'focus', 'blur',
+    'keydown', 'keyup', 'keypress', 'input', 'beforeinput'];
+
+  let host = null;
+  let ui = null;
+
+  // registered at injection time, before the app's scripts run
+  for (const type of SHIELDED) {
+    window.addEventListener(type, e => {
+      if (type === 'keydown' && HOTKEYS[e.key] && ui) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        ui.start(HOTKEYS[e.key]);
+        return;
+      }
+      // Escape cancels a capture wherever focus is, without also closing the app's popup
+      if (type === 'keydown' && e.key === 'Escape' && ui?.busy()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        ui.cancel();
+        return;
+      }
+      if (!host) return;
+      const ours = e.composedPath().includes(host) || e.relatedTarget === host;
+      if (!ours) return;
+      // stop it reaching the app; default actions (typing, focusing the textarea) still happen
+      e.stopImmediatePropagation();
+      ui?.handle(e);
+    }, true);
+  }
 
   function mount() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', mount, { once: true });
-    const host = document.createElement('div');
+    host = document.createElement('div');
     host.id = 'fwlite-qa-root';
     host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
     document.documentElement.appendChild(host);
@@ -21,13 +58,16 @@
     root.innerHTML = `
 <style>
   * { box-sizing: border-box; font: 13px/1.4 system-ui, sans-serif; }
-  .bar { position: fixed; left: 12px; bottom: 12px; display: flex; gap: 4px; align-items: center; padding: 4px;
+  .bar { position: fixed; bottom: 12px; display: flex; gap: 2px; align-items: center; padding: 4px;
     background: #1f2937; color: #f9fafb; border-radius: 999px; box-shadow: 0 4px 16px #0005; pointer-events: auto; opacity: .85; }
+  .bar.left { left: 12px; } .bar.right { right: 12px; }
   .bar:hover { opacity: 1; }
   .bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; margin: 0 4px 0 8px; }
   button { cursor: pointer; border: 0; border-radius: 999px; padding: 4px 10px; background: transparent; color: inherit; }
   .bar button:hover { background: #374151; }
-  .count { padding: 0 8px; color: #9ca3af; }
+  .bar button.finish { background: #374151; }
+  .bar button.finish.armed { background: #dc2626; }
+  .count { padding: 0 6px; color: #9ca3af; }
   .layer { position: fixed; inset: 0; pointer-events: auto; cursor: crosshair; background: #0000000d; }
   .sel { position: fixed; border: 2px solid #3b82f6; background: #3b82f622; pointer-events: none; }
   .hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff;
@@ -40,123 +80,136 @@
   textarea { width: 100%; min-height: 90px; resize: vertical; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px; }
   .actions { display: flex; justify-content: space-between; align-items: center; color: #6b7280; font-size: 12px; }
   .actions button.save { background: #2563eb; color: #fff; }
-  .toast { position: fixed; left: 12px; bottom: 56px; background: #065f46; color: #fff; padding: 6px 12px; border-radius: 6px; }
+  .toast { position: fixed; bottom: 56px; background: #065f46; color: #fff; padding: 6px 12px; border-radius: 6px; }
+  .toast.left { left: 12px; } .toast.right { right: 12px; }
 </style>
-<div class="bar" part="bar">
+<div class="bar left">
   <span class="dot" title="QA session recording"></span>
-  <button data-mode="element" title="Pick an element (F8)">◎ Element</button>
-  <button data-mode="region" title="Drag a region (F9)">▭ Region</button>
-  <button data-mode="note" title="General note (F7)">✎ Note</button>
-  <span class="count">0</span>
+  <button data-act="element" title="Pick an element (F8)">◎ Element</button>
+  <button data-act="region" title="Drag a region (F9)">▭ Region</button>
+  <button data-act="note" title="General note (F7)">✎ Note</button>
+  <span class="count" title="Notes saved">0</span>
+  <button data-act="side" title="Move the toolbar to the other side">⇄</button>
+  <button data-act="finish" class="finish" title="Finish the session and close the app">Finish</button>
 </div>`;
     const bar = root.querySelector('.bar');
     const countEl = root.querySelector('.count');
+    const finishBtn = root.querySelector('.finish');
+    let side = localStorage.getItem('fwlite-qa-side') === 'right' ? 'right' : 'left';
     let busy = false;
-    let count = 0;
+    let finishArmed = null;
+    // the current mode's handler for events from inside the overlay (pointer drags, element picking, the form)
+    let modeHandler = null;
+    setSide(side);
 
-    bar.addEventListener('click', e => {
-      const mode = e.target.closest('button')?.dataset.mode;
-      if (mode) start(mode);
-    });
-    // capture phase so the app never sees the hotkeys
-    window.addEventListener('keydown', e => {
-      const mode = { F7: 'note', F8: 'element', F9: 'region' }[e.key];
-      if (!mode) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      start(mode);
-    }, true);
+    ui = {
+      start(mode) {
+        if (busy) return;
+        busy = true;
+        if (mode === 'note') return openForm(null, null);
+        if (mode === 'region') return pickRegion();
+        return pickElement();
+      },
+      busy: () => busy && !!modeHandler,
+      cancel: () => done(),
+      handle(e) {
+        const el = e.composedPath()[0];
+        if (e.type === 'click' && el instanceof Element && bar.contains(el)) {
+          const act = el.closest('button')?.dataset.act;
+          if (act === 'side') setSide(side === 'left' ? 'right' : 'left');
+          else if (act === 'finish') finish();
+          else if (act) ui.start(act);
+          return;
+        }
+        modeHandler?.(e, el);
+      },
+    };
 
-    function start(mode) {
-      if (busy) return;
-      busy = true;
-      if (mode === 'note') return openForm(null, null);
-      if (mode === 'region') return pickRegion();
-      return pickElement();
+    function setSide(next) {
+      side = next;
+      localStorage.setItem('fwlite-qa-side', side);
+      bar.classList.toggle('left', side === 'left');
+      bar.classList.toggle('right', side === 'right');
+    }
+
+    function finish() {
+      if (!finishArmed) {
+        finishBtn.classList.add('armed');
+        finishBtn.textContent = 'Click again to close';
+        finishArmed = setTimeout(() => {
+          finishArmed = null;
+          finishBtn.classList.remove('armed');
+          finishBtn.textContent = 'Finish';
+        }, 3000);
+        return;
+      }
+      clearTimeout(finishArmed);
+      finishBtn.textContent = 'Saving…';
+      void window.__fwliteQaFinish?.();
     }
 
     function done() {
       busy = false;
+      modeHandler = null;
       root.querySelectorAll('.layer, .sel, .hint, .form').forEach(n => n.remove());
     }
 
-    function hint(text) {
+    function add(cls, text) {
       const el = document.createElement('div');
-      el.className = 'hint';
-      el.textContent = text;
+      el.className = cls;
+      if (text) el.textContent = text;
       root.appendChild(el);
+      return el;
     }
 
-    function layerWithEsc() {
-      const layer = document.createElement('div');
-      layer.className = 'layer';
-      layer.tabIndex = -1;
-      root.appendChild(layer);
-      const onKey = e => {
-        if (e.key !== 'Escape') return;
-        e.stopImmediatePropagation();
-        window.removeEventListener('keydown', onKey, true);
-        done();
-      };
-      window.addEventListener('keydown', onKey, true);
-      return { layer, release: () => window.removeEventListener('keydown', onKey, true) };
+    function place(el, r) {
+      Object.assign(el.style, { left: r.x + 'px', top: r.y + 'px', width: r.width + 'px', height: r.height + 'px' });
     }
 
     function pickRegion() {
-      hint('Drag a region · Esc to cancel');
-      const { layer, release } = layerWithEsc();
-      const sel = document.createElement('div');
-      sel.className = 'sel';
-      let start = null;
-      layer.addEventListener('pointerdown', e => {
-        start = { x: e.clientX, y: e.clientY };
-        layer.setPointerCapture(e.pointerId);
-        root.appendChild(sel);
-        place(e);
+      add('hint', 'Drag a region · Esc to cancel');
+      const layer = add('layer');
+      const sel = add('sel');
+      sel.style.display = 'none';
+      let from = null;
+      const rectTo = e => ({
+        x: Math.min(from.x, e.clientX), y: Math.min(from.y, e.clientY),
+        width: Math.abs(e.clientX - from.x), height: Math.abs(e.clientY - from.y),
       });
-      layer.addEventListener('pointermove', e => start && place(e));
-      layer.addEventListener('pointerup', e => {
-        if (!start) return;
-        const rect = place(e);
-        release();
-        layer.remove();
-        root.querySelector('.hint')?.remove();
-        if (rect.width < 6 || rect.height < 6) return done();
-        openForm(rect, describe(elementAt(rect.x + rect.width / 2, rect.y + rect.height / 2)));
-      });
-      function place(e) {
-        const rect = {
-          x: Math.min(start.x, e.clientX), y: Math.min(start.y, e.clientY),
-          width: Math.abs(e.clientX - start.x), height: Math.abs(e.clientY - start.y),
-        };
-        Object.assign(sel.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.width + 'px', height: rect.height + 'px' });
-        return rect;
-      }
+      modeHandler = (e, el) => {
+        if (el !== layer) return;
+        if (e.type === 'pointerdown') {
+          from = { x: e.clientX, y: e.clientY };
+          layer.setPointerCapture(e.pointerId);
+          sel.style.display = '';
+          place(sel, rectTo(e));
+        } else if (e.type === 'pointermove' && from) {
+          place(sel, rectTo(e));
+        } else if (e.type === 'pointerup' && from) {
+          const rect = rectTo(e);
+          layer.remove();
+          root.querySelector('.hint')?.remove();
+          if (rect.width < 6 || rect.height < 6) return done();
+          openForm(rect, describe(elementAt(rect.x + rect.width / 2, rect.y + rect.height / 2)));
+        }
+      };
     }
 
     function pickElement() {
-      hint('Click an element · Esc to cancel');
-      const { layer, release } = layerWithEsc();
-      const sel = document.createElement('div');
-      sel.className = 'sel';
-      root.appendChild(sel);
-      let current = null;
-      layer.addEventListener('pointermove', e => {
-        current = elementAt(e.clientX, e.clientY);
-        if (!current) return;
-        const r = current.getBoundingClientRect();
-        Object.assign(sel.style, { left: r.x + 'px', top: r.y + 'px', width: r.width + 'px', height: r.height + 'px' });
-      });
-      layer.addEventListener('click', e => {
-        e.preventDefault();
-        current = elementAt(e.clientX, e.clientY);
-        release();
+      add('hint', 'Click an element · Esc to cancel');
+      const layer = add('layer');
+      const sel = add('sel');
+      modeHandler = (e, el) => {
+        if (el !== layer) return;
+        const target = elementAt(e.clientX, e.clientY);
+        if (e.type === 'pointermove' && target) place(sel, target.getBoundingClientRect());
+        if (e.type !== 'click') return;
         layer.remove();
         root.querySelector('.hint')?.remove();
-        if (!current) return done();
-        const r = current.getBoundingClientRect();
-        openForm({ x: r.x, y: r.y, width: r.width, height: r.height }, describe(current));
-      });
+        if (!target) return done();
+        const r = target.getBoundingClientRect();
+        openForm({ x: r.x, y: r.y, width: r.width, height: r.height }, describe(target));
+      };
     }
 
     function elementAt(x, y) {
@@ -164,20 +217,13 @@
     }
 
     function openForm(rect, target) {
-      const form = document.createElement('div');
-      form.className = 'form';
+      const form = add('form');
       form.innerHTML = `
         <div class="kinds">${KINDS.map((k, i) => `<button data-kind="${k.id}" aria-pressed="${i === 0}">${k.label}</button>`).join('')}</div>
         <textarea placeholder="What happened, what did you expect?"></textarea>
         <div class="actions"><span>Ctrl+Enter to save · Esc to cancel</span>
-          <span><button class="cancel">Cancel</button> <button class="save">Save</button></span></div>`;
-      root.appendChild(form);
-      if (rect) {
-        const sel = root.querySelector('.sel') ?? document.createElement('div');
-        sel.className = 'sel';
-        Object.assign(sel.style, { left: rect.x + 'px', top: rect.y + 'px', width: rect.width + 'px', height: rect.height + 'px' });
-        root.appendChild(sel);
-      }
+          <span><button data-form="cancel">Cancel</button> <button data-form="save" class="save">Save</button></span></div>`;
+      if (rect) place(root.querySelector('.sel') ?? add('sel'), rect);
       // next to the selection when it fits, else centred
       const fw = 340, fh = 200;
       let left = (innerWidth - fw) / 2, top = (innerHeight - fh) / 2;
@@ -186,24 +232,22 @@
         top = rect.y + rect.height + 8 + fh < innerHeight ? rect.y + rect.height + 8 : Math.max(8, rect.y - fh - 8);
       }
       Object.assign(form.style, { left: left + 'px', top: top + 'px' });
-      let kind = KINDS[0].id;
-      form.querySelector('.kinds').addEventListener('click', e => {
-        const b = e.target.closest('button');
-        if (!b) return;
-        kind = b.dataset.kind;
-        form.querySelectorAll('.kinds button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-        text.focus(); // so typing carries on into the note
-      });
       const text = form.querySelector('textarea');
       text.focus();
-      // keep keystrokes in the form away from the app's own shortcuts
-      form.addEventListener('keydown', e => {
-        e.stopPropagation();
-        if (e.key === 'Escape') done();
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save();
-      });
-      form.querySelector('.cancel').addEventListener('click', done);
-      form.querySelector('.save').addEventListener('click', save);
+      let kind = KINDS[0].id;
+
+      modeHandler = (e, el) => {
+        if (!(el instanceof Element) || !form.contains(el)) return;
+        if (e.type === 'keydown' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return void save();
+        if (e.type !== 'click') return;
+        const button = el.closest('button');
+        if (button?.dataset.kind) {
+          kind = button.dataset.kind;
+          form.querySelectorAll('.kinds button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+          text.focus(); // so typing carries on into the note
+        } else if (button?.dataset.form === 'cancel') done();
+        else if (button?.dataset.form === 'save') void save();
+      };
 
       async function save() {
         const note = {
@@ -216,8 +260,7 @@
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         try {
           const saved = await window.__fwliteQaNote(note);
-          count = saved.count;
-          countEl.textContent = String(count);
+          countEl.textContent = String(saved.count);
           toast(`Saved note ${saved.id}`);
         } catch (err) {
           toast(`Saving failed: ${err?.message ?? err}`);
@@ -229,10 +272,7 @@
     }
 
     function toast(message) {
-      const el = document.createElement('div');
-      el.className = 'toast';
-      el.textContent = message;
-      root.appendChild(el);
+      const el = add(`toast ${side}`, message);
       setTimeout(() => el.remove(), 2000);
     }
   }
@@ -247,7 +287,7 @@
     const attrs = {};
     for (const a of el.attributes) {
       if (a.name === 'id' && !stableId(a.value)) continue;
-      if (a.name.startsWith('data-') || ['id','role', 'aria-label', 'title', 'name', 'placeholder', 'type', 'href'].includes(a.name)) {
+      if (a.name.startsWith('data-') || ['id', 'role', 'aria-label', 'title', 'name', 'placeholder', 'type', 'href'].includes(a.name)) {
         attrs[a.name] = a.value.slice(0, 80);
       }
     }

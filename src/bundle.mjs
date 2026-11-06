@@ -47,14 +47,14 @@ function feedbackMarkdown(session, notes, events) {
     const nearby = errors.filter(e => { const d = at - Date.parse(e.at); return d >= -2000 && d <= NEARBY_MS; });
     if (nearby.length) {
       lines.push(`Errors in the minute before this note:`, '');
-      for (const e of nearby.slice(-5)) lines.push(`- \`${e.type}\` ${oneLine(e.text ?? `${e.status ?? e.error ?? ''} ${e.url ?? ''}`)}`);
+      for (const e of nearby.slice(-5)) lines.push(`- \`${e.type}\` ${describeEvent(e)}`);
       lines.push('');
     }
   }
   const unattached = errors.filter(e => !notes.some(n => { const d = Date.parse(n.at) - Date.parse(e.at); return d >= -2000 && d <= NEARBY_MS; }));
   if (unattached.length) {
     lines.push('## Other errors during the session', '');
-    for (const e of unattached.slice(0, 30)) lines.push(`- ${e.at} \`${e.type}\` ${oneLine(e.text ?? `${e.status ?? e.error ?? ''} ${e.url ?? ''}`)}`);
+    for (const e of unattached.slice(0, 30)) lines.push(`- ${e.at} \`${e.type}\` ${describeEvent(e)}`);
     if (unattached.length > 30) lines.push(`- …and ${unattached.length - 30} more in events.json`);
     lines.push('');
   }
@@ -98,4 +98,9 @@ Work in a checkout of that repo and follow its AGENTS.md files.
   before it goes into an issue or PR, and never include anything from real projects.
 - Don't commit, push or open PRs without the tester's go-ahead (see the repo's AGENTS.md).
 `;
+}
+
+function describeEvent(e) {
+  const what = e.text ?? `${e.status ?? e.error ?? ''} ${e.url ?? ''}`;
+  return oneLine(e.source ? `${what} (${e.source})` : what);
 }

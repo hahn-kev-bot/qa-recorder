@@ -83,7 +83,7 @@ export async function launchMaui({ buildDir, sessionDir, exe }) {
     },
     async close(browser) {
       await browser?.close().catch(() => {});
-      if (child.exitCode === null) child.kill();
+      await stop(child);
     },
   };
 }
@@ -115,7 +115,7 @@ export async function launchWeb({ buildDir, sessionDir, exe }) {
     },
     async close(browser) {
       await browser?.close().catch(() => {});
-      if (child.exitCode === null) child.kill();
+      await stop(child);
     },
   };
 }
@@ -130,4 +130,12 @@ async function launchBrowser() {
     }
   }
   throw new Error(`No Chromium-based browser found. Install Chrome or Edge, or run \`npx playwright install chromium\`.\n${errors.join('\n')}`);
+}
+
+/** Kill the app and wait for it to be gone, so callers can rely on it having exited. */
+async function stop(child, timeoutMs = 10_000) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise(resolve => child.once('exit', resolve));
+  child.kill();
+  await Promise.race([exited, new Promise(resolve => setTimeout(resolve, timeoutMs))]);
 }

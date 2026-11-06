@@ -48,11 +48,41 @@ await page.keyboard.type('Smoke test: element note');
 await page.keyboard.press('Control+Enter');
 await page.waitForFunction(() => document.getElementById('fwlite-qa-root').shadowRoot.querySelector('.count').textContent === '2');
 
-await browser.close();
-launcher.child.kill();
-const { notes } = await sessionDone;
+// a note about an open popup: using the toolbar must not close it (popups close on clicks/focus outside them)
+await page.getByRole('button', { name: 'Toggle filters' }).click();
+const popupContent = page.getByText('Specific field');
+await popupContent.waitFor();
+const toolbar = page.locator('#fwlite-qa-root .bar');
+await toolbar.locator('button[data-act="region"]').click();
+assert.ok(await popupContent.isVisible(), 'popup still open after clicking the toolbar');
+const box = await popupContent.boundingBox();
+await page.mouse.move(box.x - 20, box.y - 20);
+await page.mouse.down();
+await page.mouse.move(box.x + 250, box.y + 120, { steps: 5 });
+await page.mouse.up();
+assert.ok(await popupContent.isVisible(), 'popup still open after dragging a region');
+await page.keyboard.type('Smoke test: popup note');
+await page.keyboard.press('Control+Enter');
+await page.waitForFunction(() => document.getElementById('fwlite-qa-root').shadowRoot.querySelector('.count').textContent === '3');
+assert.ok(await popupContent.isVisible(), 'popup still open after saving the note');
 
-assert.equal(notes.length, 2);
+// Escape cancels a capture without closing the popup
+await page.keyboard.press('F9');
+await page.keyboard.press('Escape');
+assert.ok(await popupContent.isVisible(), 'popup still open after cancelling a capture');
+
+await toolbar.locator('button[data-act="side"]').click();
+assert.match(await toolbar.getAttribute('class'), /\bright\b/, 'toolbar moved to the right');
+
+// Finish needs two clicks, then ends the session and closes the app
+await toolbar.locator('button[data-act="finish"]').click();
+await toolbar.locator('button[data-act="finish"]').click();
+const { notes } = await sessionDone;
+await browser.close().catch(() => {});
+assert.notEqual(launcher.child.exitCode ?? launcher.child.signalCode, null, 'app closed by Finish');
+
+assert.equal(notes.length, 3);
+assert.equal(notes[2].text, 'Smoke test: popup note');
 assert.equal(notes[0].kind, 'bug');
 assert.ok(notes[0].rect && notes[0].screenshots.crop, 'region note has a crop');
 assert.equal(notes[1].kind, 'idea');
