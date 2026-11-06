@@ -1,0 +1,20 @@
+{
+  "name": "fwlite-qa",
+  "version": "0.1.0",
+  "description": "Download a CI build of FieldWorks Lite, QA it with an injected feedback toolbar, and hand the notes to a coding agent.",
+  "type": "module",
+  "bin": {
+    "fwlite-qa": "src/cli.mjs"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs start",
+    "check": "node --check src/cli.mjs && node --check src/builds.mjs && node --check src/launch.mjs && node --check src/harness.mjs && node --check src/bundle.mjs && node --check src/overlay.js",
+    "smoke": "node test/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "playwright-core": "^1.56.0"
+  }
+}
