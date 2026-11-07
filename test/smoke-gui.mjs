@@ -72,7 +72,7 @@ await main.getByRole('button', { name: 'Finish session' }).waitFor();
 await main.locator('.badge.running').waitFor({ timeout: 60_000 });
 await main.getByRole('button', { name: 'Finish session' }).click();
 await main.locator('.badge.ended').waitFor({ timeout: 30_000 });
-await main.getByText('No notes in this session.').waitFor();
+await main.getByText('No notes or spoken remarks in this session.').waitFor();
 
 // --- a CDP target: the test owns the browser, so it can act as the tester while the GUI watches
 const port = await freePort();

@@ -47,7 +47,7 @@ export function describeAction(a) {
 }
 
 /** Actions and page changes between the previous note and this one: how the tester got here. */
-function stepsBefore(note, previous, events) {
+export function stepsBefore(note, previous, events) {
   const from = previous ? Date.parse(previous.at) : 0;
   const to = Date.parse(note.at);
   const steps = [];
@@ -155,11 +155,11 @@ export function timelineRows(session, notes, events, speech = []) {
   }
   for (const n of notes) {
     const summary = `${KIND_LABEL[n.kind] ?? n.kind}: ${noteTitle(n)}`;
-    rows.push({ at: n.at, kind: 'note', id: n.id, summary, text: `note ${n.id} ${summary}`, link: n.screenshots.crop ?? n.screenshots.full });
+    rows.push({ at: n.at, kind: 'note', id: n.id, summary, text: `note ${n.id} ${summary}`, link: n.screenshots.crop ?? n.screenshots.full, full: n.screenshots.full, audio: n.audio });
   }
   for (const s of speech) {
     if (s.mode === 'push-to-talk') continue; // those are notes already
-    rows.push({ at: s.at, kind: 'speech', text: s.text ? quote(s.text) : '(transcribing…)', link: s.screenshot });
+    rows.push({ at: s.at, kind: 'speech', text: s.text ? quote(s.text) : '(transcribing…)', link: s.screenshot, full: s.screenshot, audio: s.audio, clip: s.clip });
   }
   return rows
     .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
@@ -240,7 +240,8 @@ ${build ? `- Build tested: ${build}\n` : ''}
 
 1. Read \`feedback.md\` and every screenshot it links. Each note lists the steps the tester took before it; the
    whole session (clicks, typing, page changes${speech ? ', what the tester said' : ''}, errors) is in \`timeline.md\`${speech ? `, and the
-   spoken commentary on its own is in \`transcript.md\`. Spoken remarks are feedback too, even when no note was saved` : ''}.
+   spoken commentary on its own is in \`transcript.md\`. Spoken remarks are feedback too, even when no note was saved;
+   transcripts can mishear words, so when a remark doesn't make sense, ask the tester rather than guess` : ''}.
    \`events.json\` has the raw log.
 2. For each note, find the code involved: search for the target element's text, aria-label, placeholder or data
    attributes. Notes marked 👍 Like are things to keep; don't change those.

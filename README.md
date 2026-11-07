@@ -73,11 +73,20 @@ transcribed on your machine with Whisper (base.en, downloaded once, about 80 MB,
 
 | Mode | How | Result |
 |---|---|---|
-| Push-to-talk | hold F6 in the app, or hold 🎙 on its toolbar | each press becomes a 🎙 Spoken note with a screenshot from when you pressed |
-| Open mic | talk; 🎙 on the toolbar mutes | each utterance goes into the timeline with a screenshot from when you started speaking, and into `transcript.md` |
+| Push-to-talk | hold F6 in the app, or hold 🎙 on its toolbar | each press becomes a 🎙 Spoken note with a screenshot from when you pressed; its audio is in `speech/NNN.wav` |
+| Open mic | talk; 🎙 on the toolbar mutes | the whole session's audio is kept (`speech/session.wav`) and all of it is transcribed, in pieces cut at your pauses; each remark goes into the timeline with a screenshot from when you started speaking, and into `transcript.md` |
 
-The audio of each utterance is kept in `speech/` (silence is dropped). Voice needs the desktop app; the CLI has no
-microphone.
+The microphone is recorded as it is, without the browser's noise suppression, echo cancellation or auto gain (they
+muffle speech; Whisper copes with background noise better). Quiet speech is raised to a normal level before
+transcription; the saved audio stays as recorded. Voice needs the desktop app; the CLI has no microphone.
+
+**Microphone page** (in the sidebar): pick the microphone, watch its level, and record a 4-second test that is played
+back, transcribed, and checked for being too quiet, muffled or distorted. You don't need it before every session; use
+it once, or when a transcript looks wrong.
+
+**Re-transcribe** on a finished session runs all its speech through Whisper small.en (downloaded the first time, about
+250 MB; roughly three times slower than real time) for a more accurate transcript. The session page plays each remark's
+audio, so you can check a transcript against what was said.
 
 ## Targets
 

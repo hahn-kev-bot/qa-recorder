@@ -23,29 +23,101 @@ function rememberVoice(targetId, voice) {
 
 const mics = new Map(); // session id → { stop }
 
-async function openMic() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-  });
-  return stream;
+const MIC_KEY = 'mic-device';
+function savedMic() {
+  try {
+    return localStorage.getItem(MIC_KEY) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+function saveMic(deviceId) {
+  try {
+    if (deviceId) localStorage.setItem(MIC_KEY, deviceId);
+    else localStorage.removeItem(MIC_KEY);
+  } catch { /* not remembered */ }
 }
 
-async function startMic(sessionId, stream, voice) {
+/**
+ * The microphone picked on the Microphone page (or the default), unprocessed: the browser's noise suppression,
+ * echo cancellation and auto gain muffle speech, and Whisper copes with background noise better than with that.
+ */
+async function openMic() {
+  const audio = { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  const deviceId = savedMic();
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { ...audio, deviceId: { exact: deviceId } } : audio });
+  } catch (e) {
+    if (!deviceId || e.name !== 'OverconstrainedError') throw e;
+    saveMic(undefined); // that microphone is gone; use the default
+    return navigator.mediaDevices.getUserMedia({ audio });
+  }
+}
+
+/**
+ * 16 kHz mono from a stream: { ctx, stop() → Float32Array of what was kept }. onBlock sees each 100 ms block;
+ * keep: false for long recordings that are saved elsewhere.
+ */
+async function capture16k(stream, onBlock = () => {}, { keep = true } = {}) {
   const ctx = new AudioContext({ sampleRate: 16000 });
   await ctx.audioWorklet.addModule('mic-worklet.js');
   const source = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, 'pcm-capture');
+  const blocks = [];
   node.port.onmessage = e => {
-    const samples = e.data;
-    // the block ended just now; date its first sample
-    window.qa.sendAudio(sessionId, samples, Date.now() - (samples.length / 16) - ctx.baseLatency * 1000);
+    if (keep) blocks.push(e.data);
+    onBlock(e.data);
   };
   source.connect(node);
+  return {
+    ctx,
+    stop() {
+      source.disconnect();
+      void ctx.close();
+      const all = new Float32Array(blocks.reduce((n, b) => n + b.length, 0));
+      let at = 0;
+      for (const b of blocks) {
+        all.set(b, at);
+        at += b.length;
+      }
+      return all;
+    },
+  };
+}
+
+/** A WAV blob URL for playing a test recording back. */
+function wavUrl(samples) {
+  const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
+  const text = (at, s) => [...s].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  text(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true);
+  view.setUint32(28, 32000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((x, i) => view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 32767, true));
+  return URL.createObjectURL(new Blob([view], { type: 'audio/wav' }));
+}
+
+async function startMic(sessionId, stream, voice) {
+  let ctx;
+  // the block ended just now; date its first sample. Blocks aren't kept: the session saves its own audio.
+  const recorder = await capture16k(stream, samples => {
+    window.qa.sendAudio(sessionId, samples, Date.now() - (samples.length / 16) - (ctx?.baseLatency ?? 0) * 1000);
+  }, { keep: false });
+  ctx = recorder.ctx;
   mics.set(sessionId, {
     voice,
+    label: stream.getAudioTracks()[0]?.label,
     stop() {
+      recorder.stop();
       stream.getTracks().forEach(track => track.stop());
-      void ctx.close();
       mics.delete(sessionId);
     },
   });
@@ -168,7 +240,8 @@ function sidebar() {
     <button class="nav ${v.kind === 'sessions' ? 'on' : ''}" data-action="go" data-kind="sessions">
       <span class="grow">All sessions</span>${state.sessions.some(isLive) ? raw('<span class="dot"></span>') : ''}
     </button>
-    <button class="nav ${v.kind === 'storage' ? 'on' : ''}" data-action="go" data-kind="storage">Storage and cleanup</button>`;
+    <button class="nav ${v.kind === 'storage' ? 'on' : ''}" data-action="go" data-kind="storage">Storage and cleanup</button>
+    <button class="nav ${v.kind === 'mic' ? 'on' : ''}" data-action="go" data-kind="mic">Microphone</button>`;
 }
 
 function sessionsTable(sessions, { showTarget }) {
@@ -262,30 +335,101 @@ function sessionView(s, detail) {
       <button class="btn small-btn" data-action="open" data-path="${s.dir}/feedback.md">feedback.md</button>
       <button class="btn small-btn" data-action="open" data-path="${s.dir}/timeline.md">timeline.md</button>
       ${detail?.speech?.length ? html`<button class="btn small-btn" data-action="open" data-path="${s.dir}/transcript.md">transcript.md</button>` : ''}
-      ${(s.trace ?? []).map((f, i, all) => html`<button class="btn small-btn" data-action="trace" data-id="${s.id}" data-file="${f}" title="Playwright Trace Viewer: screenshots, network and console, with the timeline as markers">${all.length > 1 ? `trace ${i + 1}` : 'trace'}</button>`)}
+      ${(s.trace ?? []).map((f, i, all) => html`<button class="btn small-btn" data-action="trace" data-id="${s.id}" data-file="${f}" title="Playwright Trace Viewer: network and console, with the timeline as markers">${all.length > 1 ? `trace ${i + 1}` : 'trace'}</button>`)}
+      ${s.audio?.file ? html`<button class="btn small-btn" data-action="play" data-src="${fileUrl(s.id, s.audio.file)}" title="The whole session's audio">▶ all audio</button>` : ''}
       <button class="btn small-btn" data-action="open" data-path="${s.dir}">folder</button>
+      ${detail?.speech?.length && !live ? html`<span class="grow"></span>
+        <span class="muted small">${s.transcribedWith ? `Transcribed again with ${s.transcribedWith.split('/').pop()}` : ''}</span>
+        <button class="btn small-btn" data-action="retranscribe" data-id="${s.id}" ${state.busy[`retranscribe:${s.id}`] ? raw('disabled') : ''}
+          title="Run all of this session's speech through the larger Whisper model (slower, more accurate)">${state.busy[`retranscribe:${s.id}`] ? html`${spinner} ${state.retranscribeStatus ?? 'Re-transcribing…'}` : 'Re-transcribe with the better model'}</button>` : ''}
     </div>
     ${s.error ? html`<div class="card"><h3>The session hit an error</h3><pre class="log">${s.error}</pre></div>` : ''}
     ${live ? html`<div class="card"><h3>Live</h3>
       <p class="muted small">In the app: F8 pick an element · F9 drag a region · F7 general note · ⇄ moves the toolbar · Finish twice ends the session.</p>
       ${mics.has(s.id) ? html`<p class="small"><span class="dot inline"></span> Microphone on (${mics.get(s.id).voice === 'open-mic' ? 'open mic: everything you say is transcribed; 🎙 on the toolbar mutes' : 'push-to-talk: hold F6 in the app, or hold 🎙 on its toolbar'}).</p>` : ''}
       <pre class="log">${(log ?? []).join('\n')}</pre></div>` : ''}
-    <h3>${notes.length} note${notes.length === 1 ? '' : 's'}</h3>
-    ${notes.length ? html`<div class="notes">${notes.map(n => noteCard(s.id, n))}</div>` : html`<div class="empty">${live ? 'Notes appear here as you save them.' : 'No notes in this session.'}</div>`}
-    ${timelineCard(detail?.timeline ?? [], live)}
-    ${errors.length ? html`<div class="card" style="margin-top:16px"><details><summary><b>${errors.length} error${errors.length === 1 ? '' : 's'} logged</b> <span class="muted small">(console errors, failed requests, HTTP ≥ 400)</span></summary>
-      <table>${errors.slice(0, 200).map(e => html`<tr><td class="small muted">${new Date(e.at).toLocaleTimeString()}</td><td class="mono small">${e.type}</td><td class="small">${e.text ?? e.status ?? ''} ${e.url ? html`<span class="muted mono">${e.url}</span>` : ''}</td></tr>`)}</table>
-      </details></div>` : ''}`;
+    ${summaryRow(s, detail, errors)}
+    ${notesSection(s, notes, remarks(detail), live)}
+    ${timelineCard(s.id, detail?.timeline ?? [], live, state.view.timelineFilter ?? 'all')}`;
+}
+
+/** Open-mic utterances (push-to-talk ones are notes already). */
+const remarks = detail => (detail?.speech ?? []).filter(x => x.mode !== 'push-to-talk');
+
+function duration(s) {
+  const end = s.endedAt ? Date.parse(s.endedAt) : Date.now();
+  const sec = Math.max(0, Math.round((end - Date.parse(s.startedAt)) / 1000));
+  return sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${sec % 60} s`;
+}
+
+function summaryRow(s, detail, errors) {
+  const actions = (detail?.events ?? []).filter(e => e.type === 'action' && !e.setup).length;
+  const voice = { 'open-mic': '🎙 open mic', 'push-to-talk': '🎙 push-to-talk' }[s.voice] ?? (detail?.speech?.length ? '🎙 voice' : '');
+  const stat = (n, one, many, filter) => html`<button class="stat" data-action="timeline-filter" data-filter="${filter}" title="Show in the timeline"><b>${n}</b> ${n === 1 ? one : many}</button>`;
+  return html`<div class="row stats">
+    <span class="stat plain"><b>${duration(s)}</b>${s.endedAt ? '' : ' so far'}</span>
+    ${stat(detail?.notes?.length ?? 0, 'note', 'notes', 'said')}
+    ${remarks(detail).length ? stat(remarks(detail).length, 'spoken remark', 'spoken remarks', 'said') : ''}
+    ${stat(actions, 'action', 'actions', 'actions')}
+    ${stat(s.pages ?? 0, 'page', 'pages', 'pages')}
+    ${stat(errors.length, 'error', 'errors', 'errors')}
+    ${voice ? html`<span class="stat plain">${voice}</span>` : ''}
+  </div>`;
+}
+
+function notesSection(s, notes, spoken, live) {
+  if (!notes.length && !spoken.length) {
+    return html`<div class="empty">${live ? 'Notes and spoken remarks appear here as you make them.' : 'No notes or spoken remarks in this session.'}</div>`;
+  }
+  return html`
+    ${notes.length ? html`<h3>${notes.length} note${notes.length === 1 ? '' : 's'}</h3><div class="notes">${notes.map(n => noteCard(s.id, n))}</div>` : ''}
+    ${spoken.length ? html`<h3 style="margin-top:16px">${spoken.length} spoken remark${spoken.length === 1 ? '' : 's'} <span class="muted small">(open mic)</span></h3>
+      <div class="notes">${spoken.map(x => remarkCard(s, x))}</div>` : ''}`;
+}
+
+const clockOf = (s, iso) => {
+  const sec = Math.max(0, Math.round((Date.parse(iso) - Date.parse(s.startedAt)) / 1000));
+  return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+};
+
+/** Plays a WAV, or (clip: [from, to] seconds) just that part of the session recording via a media fragment. */
+const playButton = (sessionId, audio, label = '▶', clip) =>
+  audio ? html`<button class="btn small-btn play" data-action="play" data-src="${fileUrl(sessionId, audio)}${clip ? `#t=${clip[0]},${clip[1] + 0.3}` : ''}" title="Play what was said">${label}</button>` : '';
+
+function remarkCard(s, x) {
+  return html`<div class="note">
+    ${x.screenshot ? html`<img src="${fileUrl(s.id, x.screenshot)}" alt="screen when this was said" data-action="zoom" data-src="${fileUrl(s.id, x.screenshot)}">` : ''}
+    <div class="body">
+      <div class="row" style="justify-content:space-between"><b>🎙 at ${clockOf(s, x.at)}</b>${playButton(s.id, x.audio, '▶ Play', x.clip)}</div>
+      <div class="text">${x.transcribing ? html`${spinner} transcribing…` : `“${x.text}”`}</div>
+    </div>
+  </div>`;
 }
 
 const TIMELINE_ICON = { action: '›', navigate: '↪', error: '⚠', note: '📝', speech: '🎙', end: '■' };
+const TIMELINE_FILTERS = [
+  ['all', 'Everything', () => true],
+  ['said', 'Notes & speech', r => r.kind === 'note' || r.kind === 'speech'],
+  ['actions', 'Actions', r => r.kind === 'action'],
+  ['pages', 'Pages', r => r.kind === 'navigate'],
+  ['errors', 'Errors', r => r.kind === 'error'],
+];
 
-function timelineCard(rows, live) {
+function timelineCard(sessionId, rows, live, filter) {
   if (!rows.length) return '';
-  return html`<div class="card" style="margin-top:16px">
-    <h3>Timeline <span class="muted small">(${rows.length} entries${live ? ', updates as you go' : ''})</span></h3>
-    <div class="timeline" id="timeline">${rows.map(r => html`
-      <div class="tl ${r.kind}${r.setup ? ' setup' : ''}"><span class="mono muted">${r.clock}</span><span class="icon">${TIMELINE_ICON[r.kind] ?? '·'}</span><span>${r.text}${r.setup ? html` <span class="muted small">(setup)</span>` : ''}</span></div>`)}
+  const [, , keep] = TIMELINE_FILTERS.find(f => f[0] === filter) ?? TIMELINE_FILTERS[0];
+  const shown = rows.filter(keep);
+  return html`<div class="card" style="margin-top:16px" id="timeline-card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h3 style="margin:0">Timeline <span class="muted small">(${rows.length} entries${live ? ', updates as you go' : ''})</span></h3>
+      <div class="row chips">${TIMELINE_FILTERS.map(([id, label]) => html`<button class="chip ${id === filter ? 'on' : ''}" data-action="timeline-filter" data-filter="${id}">${label} <span class="muted">${rows.filter(TIMELINE_FILTERS.find(f => f[0] === id)[2]).length}</span></button>`)}</div>
+    </div>
+    <div class="timeline" id="timeline">${shown.length ? shown.map(r => html`
+      <div class="tl ${r.kind}${r.setup ? ' setup' : ''}">
+        <span class="mono muted">${r.clock}</span><span class="icon">${TIMELINE_ICON[r.kind] ?? '·'}</span>
+        <span>${r.text}${r.setup ? html` <span class="muted small">(setup)</span>` : ''} ${playButton(sessionId, r.audio, '▶', r.clip)}</span>
+        ${r.link ? html`<img class="thumb" src="${fileUrl(sessionId, r.link)}" alt="" data-action="zoom" data-src="${fileUrl(sessionId, r.full ?? r.link)}">` : html`<span></span>`}
+      </div>`) : html`<div class="muted small">Nothing of this kind in this session.</div>`}
     </div></div>`;
 }
 
@@ -295,10 +439,13 @@ function noteCard(sessionId, n) {
   return html`<div class="note">
     <img src="${fileUrl(sessionId, img)}" alt="screenshot for note ${n.id}" data-action="zoom" data-src="${fileUrl(sessionId, n.screenshots.full)}">
     <div class="body">
-      <div class="row" style="justify-content:space-between"><b>${n.id}. ${KIND[n.kind] ?? n.kind}</b><span class="muted small">${new Date(n.at).toLocaleTimeString()}</span></div>
+      <div class="row" style="justify-content:space-between"><b>${n.id}. ${KIND[n.kind] ?? n.kind}</b>
+        <span class="row" style="gap:6px">${playButton(sessionId, n.audio)}<span class="muted small">${new Date(n.at).toLocaleTimeString()}</span></span></div>
       <div class="text">${n.transcribing ? html`${spinner} transcribing…` : n.text || '(no text)'}</div>
       <div class="muted small mono">${shortUrl(n.url)}</div>
       ${t ? html`<div class="muted small">on <code>${t.tag}</code>${t.text ? html` “${t.text.slice(0, 60)}”` : ''}${t.attrs?.['aria-label'] ? html` [${t.attrs['aria-label']}]` : ''}</div>` : ''}
+      ${n.steps?.length ? html`<details class="steps"><summary class="muted small">${n.steps.length} step${n.steps.length === 1 ? '' : 's'} before this note</summary>
+        <ol class="small">${n.steps.slice(-10).map(step => html`<li>${step}</li>`)}</ol></details>` : ''}
     </div>
   </div>`;
 }
@@ -398,6 +545,8 @@ function render() {
     v.rendered = true;
   } else if (v.kind === 'storage') {
     content = storageView(v.summary);
+  } else if (v.kind === 'mic') {
+    content = micView(v);
   } else {
     content = allSessionsView();
   }
@@ -405,7 +554,76 @@ function render() {
   const scroll = main.scrollTop;
   main.innerHTML = content.s;
   main.scrollTop = scroll;
-  if (v.kind === 'session') for (const box of main.querySelectorAll('pre.log, #timeline')) box.scrollTop = box.scrollHeight;
+  // follow the newest entries while a session runs; a finished one reads from the top
+  if (v.kind === 'session') {
+    const live = state.sessions.some(x => x.id === v.id && isLive(x));
+    for (const box of main.querySelectorAll(live ? 'pre.log, #timeline' : 'pre.log')) box.scrollTop = box.scrollHeight;
+  }
+}
+
+// ---------- the Microphone page: pick a mic, watch its level, record a short test ----------
+
+let micPage; // { stream, ctx, raf } while the page is open
+
+async function startMicPage(view) {
+  stopMicPage();
+  try {
+    const stream = await openMic();
+    const ctx = new AudioContext();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const data = new Float32Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getFloatTimeDomainData(data);
+      const level = Math.sqrt(data.reduce((s, x) => s + x * x, 0) / data.length);
+      const bar = document.getElementById('meter-bar');
+      // a log scale: quiet speech (0.01) shows about a third, normal speech (0.05–0.1) most of the bar
+      if (bar) bar.style.width = `${Math.min(100, Math.max(0, (Math.log10(level + 1e-5) + 3) / 2.3) * 100)}%`;
+      micPage.raf = requestAnimationFrame(tick);
+    };
+    micPage = { stream, ctx };
+    micPage.raf = requestAnimationFrame(tick);
+    view.current = stream.getAudioTracks()[0]?.getSettings().deviceId;
+    view.devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput');
+    view.error = undefined;
+  } catch (e) {
+    view.error = `No microphone: ${e.message}. Check Windows Settings > Privacy & security > Microphone.`;
+  }
+  if (state.view === view) render();
+}
+
+function stopMicPage() {
+  if (!micPage) return;
+  cancelAnimationFrame(micPage.raf);
+  micPage.stream.getTracks().forEach(t => t.stop());
+  void micPage.ctx.close();
+  micPage = undefined;
+}
+
+function micView(v) {
+  const r = v.result;
+  return html`
+    <div class="head"><div class="grow"><h1>Microphone</h1>
+      <div class="muted">Pick the microphone voice sessions use, and check it records clearly. You only need this once, or when something sounds off.</div></div></div>
+    <div class="card">
+      ${v.error ? html`<p class="errors">${v.error}</p>` : ''}
+      <div class="row"><label for="mic-choice">Microphone</label>
+        <select id="mic-choice" ${v.devices ? '' : raw('disabled')}>
+          ${(v.devices ?? []).map(d => html`<option value="${d.deviceId}" ${d.deviceId === v.current ? raw('selected') : ''}>${d.label || 'Microphone'}</option>`)}
+        </select>
+      </div>
+      <div class="meter" title="Input level"><div id="meter-bar"></div></div>
+      <p class="muted small">Speak normally: the bar should reach the middle or beyond. Sessions record this microphone without the browser's noise suppression, echo cancellation or auto gain, which can muffle speech.</p>
+      <button class="btn primary" data-action="mic-test" ${v.recording || v.checking || !v.devices ? raw('disabled') : ''}>${v.recording ? html`${spinner} Recording… keep talking` : v.checking ? html`${spinner} Checking…` : '● Record a 4-second test'}</button>
+    </div>
+    ${r ? html`<div class="card">
+      <h3>${r.ok ? '✓ Sounds usable' : '⚠ Problems found'}</h3>
+      ${r.problems.length ? html`<ul class="errors">${r.problems.map(p => html`<li>${p}</li>`)}</ul>` : ''}
+      <p><b>Transcribed:</b> ${r.text ? `“${r.text}”` : html`<span class="muted">(nothing)</span>`}</p>
+      <p class="muted small">Level ${r.speechLevel.toFixed(3)} · peak ${r.peak.toFixed(2)} · ${(r.highShare * 100).toFixed(1)}% of the speech above 1.5 kHz (clear speech is usually over 5%)</p>
+      <audio controls src="${r.url}"></audio>
+    </div>` : ''}`;
 }
 
 function updateEditorStatus(v) {
@@ -426,9 +644,12 @@ function updateEditorStatus(v) {
 }
 
 async function go(view) {
+  if (state.view.kind === 'mic' && view.kind !== 'mic') stopMicPage();
   state.view = view;
   render();
-  if (view.kind === 'target') {
+  if (view.kind === 'mic') {
+    await startMicPage(view);
+  } else if (view.kind === 'target') {
     if (!state.latest[view.id]) void checkLatest(view.id);
   } else if (view.kind === 'session') {
     await loadSession(view.id);
@@ -515,6 +736,56 @@ const actions = {
     await api('sessions:delete', d.id);
     await refresh();
     await go({ kind: 'sessions' });
+  },
+  'mic-test': async () => {
+    const v = state.view;
+    if (!micPage) return;
+    if (v.result?.url) URL.revokeObjectURL(v.result.url);
+    v.result = undefined;
+    v.recording = true;
+    render();
+    const recorder = await capture16k(micPage.stream);
+    await new Promise(r => setTimeout(r, 4000));
+    const samples = recorder.stop();
+    v.recording = false;
+    v.checking = true;
+    render();
+    try {
+      const result = await api('mic:test', samples);
+      v.result = { ...result, url: wavUrl(samples) };
+    } finally {
+      v.checking = false;
+      if (state.view === v) render();
+    }
+  },
+  retranscribe: d => {
+    if (!confirm('Transcribe this session\'s speech again with Whisper small.en?\n\nThe first time, the model downloads (249 MB). It takes about three times as long as the audio is.')) return;
+    return busy(`retranscribe:${d.id}`, async () => {
+      state.retranscribeStatus = 'Starting…';
+      try {
+        const count = await api('sessions:retranscribe', d.id);
+        toast(`Re-transcribed: ${count} segment${count === 1 ? '' : 's'}.`);
+      } finally {
+        state.retranscribeStatus = undefined;
+      }
+      await loadSession(d.id);
+    })();
+  },
+  'timeline-filter': d => {
+    state.view.timelineFilter = d.filter;
+    render();
+    document.getElementById('timeline-card')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  },
+  play: d => {
+    // one clip at a time; pressing the playing one stops it
+    const playing = state.audio;
+    playing?.clip.pause();
+    state.audio = undefined;
+    if (playing?.src === d.src) return;
+    const audio = new Audio(d.src);
+    state.audio = { clip: audio, src: d.src };
+    audio.onended = () => { if (state.audio?.clip === audio) state.audio = undefined; };
+    audio.play().catch(e => toast(`Can't play it: ${e.message}`, true));
   },
   zoom: d => {
     const z = document.createElement('div');
@@ -622,6 +893,10 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   if (e.target.id === 'build-choice') state.view.runId = e.target.value || undefined;
   if (e.target.id === 'voice-choice' && state.view.kind === 'target') rememberVoice(state.view.id, e.target.value);
+  if (e.target.id === 'mic-choice') {
+    saveMic(e.target.value);
+    void startMicPage(state.view); // listen to the new one
+  }
 });
 document.addEventListener('keydown', e => {
   if (e.target.id === 'target-json' && e.key === 'Tab') {
@@ -639,6 +914,11 @@ window.qa.on('log', ({ scope, message }) => {
   if ((v.kind === 'target' && v.id === scope) || (v.kind === 'session' && v.id === scope)) render();
 });
 window.qa.on('session', async ({ id, targetId, type, data }) => {
+  if (type === 'retranscribe') {
+    state.retranscribeStatus = data;
+    if (state.view.kind === 'session' && state.view.id === id) render();
+    return;
+  }
   if (type === 'log') {
     // a session's setup log also shows on its target until the session page opens
     addLog(targetId, data);

@@ -44,6 +44,7 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
     target: { id: target.id, name: target.config.name, file: target.file },
     handoff: target.config.handoff ?? {},
     startedAt: startedAt.toISOString(),
+    voice,
   };
   const notes = [];
   const events = [];
@@ -112,6 +113,7 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
           currentUrl: () => app.page.url(),
           onNote: n => emitter.emit('note', n),
           onSpeech: s => emitter.emit('speech', s),
+          onAudio: info => { session.audio = info; },
           mark: label => trace?.mark(label),
           log: say,
         });
@@ -141,6 +143,7 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
         await runSteps(expand(target.config.setup, vars), { page: app.page, context: app.context, vars, configDir: vars.targetDir, log: say });
       }
       events.push({ at: new Date().toISOString(), type: 'navigate', url: app.page.url() });
+      controller.voice?.pageChanged(); // the page the tester starts on
       await setStatus('running');
       readyResolve();
       say('Session running. F8 pick an element · F9 drag a region · F7 general note · Finish on the toolbar when done.');
@@ -226,7 +229,11 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, over
     p.on('pageerror', e => record('pageerror', { text: (e.stack || e.message || `${e.name ?? 'Error'} with no message`).slice(0, 4000) }));
     p.on('requestfailed', r => record('requestfailed', { url: r.url(), text: r.failure()?.errorText }));
     p.on('response', r => { if (r.status() >= 400) record('http', { url: r.url(), status: r.status() }); });
-    p.on('framenavigated', f => { if (f === p.mainFrame()) record('navigate', { url: f.url() }); });
+    p.on('framenavigated', f => {
+      if (f !== p.mainFrame()) return;
+      record('navigate', { url: f.url() });
+      if (!isSetup()) getVoice()?.pageChanged();
+    });
   };
   for (const p of context.pages()) {
     watch(p);

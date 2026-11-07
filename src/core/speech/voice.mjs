@@ -2,82 +2,38 @@ import { SAMPLE_RATE } from './transcriber.mjs';
 
 const FRAME = 480; // 30 ms
 const FRAME_MS = (FRAME / SAMPLE_RATE) * 1000;
-const PRE_ROLL_MS = 300; // keep the start of a word that began just before detection or the key press
-const START_FRAMES = 3; // 90 ms of voice starts an utterance
-const END_SILENCE_MS = 800;
-const MIN_VOICED_MS = 300;
-const MAX_UTTERANCE_MS = 30_000;
-const PTT_TAIL_MS = 300; // audio arrives a little after the key is released
+const PRE_ROLL_MS = 300; // keep the start of a word begun just before the key went down
+const TAIL_MS = 300; // audio arrives a little after the key is released
 
 /**
- * Turns a 16 kHz microphone stream into utterances.
- * - open-mic: silence detection with an adaptive noise floor; onStart fires when speech begins (for a screenshot).
- * - push-to-talk: talk(true/false) marks each utterance.
- * onUtterance gets { id, at, end (ms since epoch), samples }; onDiscard({ id }) says a started one was too short to
- * keep. Nothing is kept while muted.
+ * Push-to-talk: turns a 16 kHz microphone stream into one utterance per key press. talk(true/false) marks each
+ * press; onStart fires on the press (for the screenshot), onUtterance({ id, at, end (ms since epoch), samples }) when
+ * its audio is complete. Nothing is kept while muted or between presses. (Open mic uses chunker.mjs instead.)
  */
-export function createSegmenter({ mode, onStart = () => {}, onUtterance, onDiscard = () => {} }) {
+export function createSegmenter({ onStart = () => {}, onUtterance }) {
   let id = 0;
   let muted = false;
-  let carry = new Float32Array(0); // samples not yet a whole frame
+  let carry = new Float32Array(0);
   let carryAt = 0;
   const preRoll = []; // recent frames: { at, samples }
-  let current = null; // { id, at, frames: [], voicedMs, silentMs }
-  let voicedRun = 0;
-  let floor = 0.005;
-  let talkUntil = null; // push-to-talk: stop collecting after this time
-
-  const rms = f => Math.sqrt(f.reduce((s, x) => s + x * x, 0) / f.length);
-
-  function begin(at) {
-    current = { id: ++id, at, frames: preRoll.map(p => p.samples), voicedMs: 0, silentMs: 0 };
-    current.at = preRoll[0]?.at ?? at;
-    onStart({ id: current.id, at: current.at });
-  }
+  let current = null; // { id, at, frames }
+  let until = null; // stop collecting after this time
 
   function end(at) {
     const u = current;
     current = null;
-    voicedRun = 0;
-    if (mode === 'open-mic' && u.voicedMs < MIN_VOICED_MS) return void onDiscard({ id: u.id }); // a cough, a click
-    // open mic: drop the trailing silence that ended it, keeping a little
-    const keep = mode === 'open-mic' ? Math.max(0, u.frames.length - Math.floor((u.silentMs - 200) / FRAME_MS)) : u.frames.length;
-    const frames = u.frames.slice(0, keep);
-    const samples = new Float32Array(frames.length * FRAME);
-    frames.forEach((f, i) => samples.set(f, i * FRAME));
-    onUtterance({ id: u.id, at: u.at, end: mode === 'open-mic' ? u.at + frames.length * FRAME_MS : at, samples });
+    until = null;
+    const samples = new Float32Array(u.frames.length * FRAME);
+    u.frames.forEach((f, i) => samples.set(f, i * FRAME));
+    onUtterance({ id: u.id, at: u.at, end: at, samples });
   }
 
   function frame(samples, at) {
     preRoll.push({ at, samples });
     while (preRoll.length > PRE_ROLL_MS / FRAME_MS) preRoll.shift();
-    if (mode === 'push-to-talk') {
-      if (current) {
-        current.frames.push(samples);
-        if (talkUntil !== null && at >= talkUntil) {
-          talkUntil = null;
-          end(at);
-        }
-      }
-      return;
-    }
-    const level = rms(samples);
-    const threshold = Math.max(0.015, floor * 3);
-    const voiced = level > threshold;
-    if (!current) {
-      if (!voiced) floor = floor * 0.95 + level * 0.05;
-      voicedRun = voiced ? voicedRun + 1 : 0;
-      if (voicedRun >= START_FRAMES) begin(at);
-      return;
-    }
+    if (!current) return;
     current.frames.push(samples);
-    if (voiced) {
-      current.voicedMs += FRAME_MS;
-      current.silentMs = 0;
-    } else {
-      current.silentMs += FRAME_MS;
-    }
-    if (current.silentMs >= END_SILENCE_MS || current.frames.length * FRAME_MS >= MAX_UTTERANCE_MS) end(at);
+    if (until !== null && at >= until) end(at);
   }
 
   return {
@@ -93,14 +49,15 @@ export function createSegmenter({ mode, onStart = () => {}, onUtterance, onDisca
       carry = all.slice(i);
       carryAt = startAt + (i / SAMPLE_RATE) * 1000;
     },
-    /** Push-to-talk key down (true) or up (false), at `at` ms since epoch. */
+    /** Key (or toolbar button) down: true, up: false; `at` in ms since epoch. */
     talk(down, at) {
-      if (mode !== 'push-to-talk' || muted) return;
+      if (muted) return;
       if (down && !current) {
-        begin(at);
-        talkUntil = null;
+        current = { id: ++id, at: preRoll[0]?.at ?? at, frames: preRoll.map(p => p.samples) };
+        until = null;
+        onStart({ id: current.id, at: current.at });
       } else if (!down && current) {
-        talkUntil = at + PTT_TAIL_MS;
+        until = at + TAIL_MS;
       }
     },
     setMuted(value) {
@@ -109,9 +66,5 @@ export function createSegmenter({ mode, onStart = () => {}, onUtterance, onDisca
       preRoll.length = 0;
     },
     get muted() { return muted; },
-    /** Ends an utterance in progress (session over). */
-    flush() {
-      if (current) end(Date.now());
-    },
   };
 }

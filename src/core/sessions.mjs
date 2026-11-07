@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { listBuilds } from './builds.mjs';
-import { timelineRows } from './bundle.mjs';
+import { stepsBefore, timelineRows } from './bundle.mjs';
 import { dirSize } from './fsutil.mjs';
 import { sessionsDir } from './paths.mjs';
 
@@ -46,7 +46,9 @@ export async function getSession(id) {
   const notes = await readJson(path.join(dir, 'notes.json'), []);
   const events = await readJson(path.join(dir, 'events.json'), []);
   const speech = await readJson(path.join(dir, 'speech.json'), []);
-  return { session: { ...session, dir }, notes, events, speech, timeline: timelineRows(session, notes, events, speech) };
+  const withSteps = notes.map((n, i) => ({ ...n, steps: stepsBefore(n, notes[i - 1], events) }));
+  const pages = new Set(events.filter(e => e.type === 'navigate' && !e.setup).map(e => e.url.split('#')[0])).size;
+  return { session: { ...session, dir, pages }, notes: withSteps, events, speech, timeline: timelineRows(session, notes, events, speech) };
 }
 
 export async function deleteSession(id) {

@@ -8,8 +8,12 @@
 - Tests: `npm test` (unit), then the smoke test for what you touched: `smoke:url` (core, overlay, timeline, trace),
   `smoke:gui` (the app), `smoke:voice` (microphone to transcript, using a WAV as the mic), `smoke:fwlite` (Windows,
   real FW Lite build). The smokes open real windows on the desktop.
-- Speech: `src/core/speech/` (segmenter is pure and unit-tested; Whisper runs in a child process). Tests share the real
-  model cache through `QA_RECORDER_MODELS` so it downloads once.
+- Speech: `src/core/speech/`. Open mic records the whole session and `chunker.mjs` cuts it into windows without ever
+  dropping speech; `voice.mjs` is push-to-talk only; `analyze.mjs` is the mic check. All three are pure and unit-tested.
+  Whisper runs in a child process. Tests share the real model cache through `QA_RECORDER_MODELS`, and
+  `QA_RECORDER_RETRANSCRIBE_MODEL` keeps re-transcription on the small model so it downloads once.
+- Writing test scripts through a shell heredoc can halve backslashes in Windows paths (`\t` becomes a tab); build
+  paths with `path.join` or write the file directly.
 - Launching Electron: strip `ELECTRON_RUN_AS_NODE` (editors set it for their terminals) and never pass a path with a
   trailing backslash on Windows (it escapes the closing quote).
 - Targets must keep tests away from real data. FW Lite's isolation keys (`FwLiteMaui:BaseDataDir`,

@@ -1,12 +1,17 @@
 // Electron main process: owns the core (builds, sessions, Playwright) and serves it to the window over IPC.
-import { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, protocol, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { artifactSize, buildsFor, deleteBuild, downloadBuild, latestBuild, listBuilds, pruneBuilds } from '../core/builds.mjs';
 import { qaHome, sessionsDir } from '../core/paths.mjs';
 import { startSession } from '../core/recorder.mjs';
+import { serveFile } from '../core/serve-file.mjs';
+import { analyzeAudio } from '../core/speech/analyze.mjs';
+import { normalize } from '../core/speech/chunker.mjs';
+import { retranscribeSession } from '../core/speech/retranscribe.mjs';
+import { createTranscriber, MODELS } from '../core/speech/transcriber.mjs';
 import { cleanupSessions, deleteSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
 import {
   authoringPrompt, deleteTarget, getTarget, listTargets, saveTarget, slug, targetFromUrl, validateTarget,
@@ -109,6 +114,28 @@ const handlers = {
     return text;
   },
 
+  'sessions:retranscribe': async id => {
+    if (live.has(id)) throw new Error('Finish the session first.');
+    const { session } = await getSession(id);
+    // tests pick the fast model so they don't download the big one
+    const model = process.env.QA_RECORDER_RETRANSCRIBE_MODEL || undefined;
+    const count = await retranscribeSession(session.dir, { model, log: m => send('session', { id, type: 'retranscribe', data: m }) });
+    send('session', { id, type: 'updated' }); // the window reloads it
+    return count;
+  },
+
+  'speech:models': () => MODELS,
+  // the microphone page's check: how usable the recording is, and what the fast model makes of it
+  'mic:test': async samples => {
+    if (!(samples instanceof Float32Array)) throw new Error('No audio.');
+    const analysis = analyzeAudio(samples);
+    // Whisper invents words ("you", "Thank you.") from silence; don't show that as a transcript
+    if (analysis.speechLevel < 0.003) return { ...analysis, text: '' };
+    testTranscriber ??= createTranscriber();
+    const segments = await testTranscriber.transcribe(normalize(samples));
+    return { ...analysis, text: segments.map(s => s.text).join(' ') };
+  },
+
   'storage:summary': () => storageSummary({ live: liveIds() }),
 
   'shell:open': p => openInside(p),
@@ -116,6 +143,8 @@ const handlers = {
 };
 
 let traceViewer;
+let testTranscriber;
+app.on('will-quit', () => testTranscriber?.close());
 /**
  * Serves a session's trace with Playwright's Trace Viewer and opens it in the default browser (Playwright opens
  * the tab itself once it is listening). One viewer at a time.
@@ -208,7 +237,7 @@ app.whenReady().then(() => {
     const u = new URL(request.url);
     const file = path.resolve(sessionsDir(), decodeURIComponent(u.pathname).replace(/^\/+/, ''));
     if (u.hostname !== 'session' || !file.startsWith(path.resolve(sessionsDir()) + path.sep)) return new Response('forbidden', { status: 403 });
-    return net.fetch(pathToFileURL(file).href);
+    return serveFile(file, request.headers.get('range'));
   });
   createWindow();
 });

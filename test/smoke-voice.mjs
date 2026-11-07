@@ -26,7 +26,7 @@ await fs.writeFile(path.join(home, 'targets', 'voice-fixture.json'), JSON.string
   setup: [{ goto: site.url }, { waitFor: { text: 'Fixture shop' } }],
 }));
 
-const env = { ...process.env, QA_RECORDER_HOME: home, QA_RECORDER_MODELS: realModels, QA_RECORDER_FAKE_MIC: fileURLToPath(new URL('./fixtures/speech.wav', import.meta.url)) };
+const env = { ...process.env, QA_RECORDER_HOME: home, QA_RECORDER_MODELS: realModels, QA_RECORDER_RETRANSCRIBE_MODEL: 'Xenova/whisper-base.en', QA_RECORDER_FAKE_MIC: fileURLToPath(new URL('./fixtures/speech.wav', import.meta.url)) };
 delete env.ELECTRON_RUN_AS_NODE;
 const app = await _electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
@@ -57,17 +57,73 @@ const openDir = await start('open-mic');
 await main.locator('#timeline .tl.speech').filter({ hasText: SENTENCES }).first().waitFor({ timeout: 120_000 });
 await page.getByRole('button', { name: 'Open menu' }).click(); // an action between utterances
 await main.locator('#timeline .tl.speech').filter({ hasText: SENTENCES }).nth(1).waitFor({ timeout: 60_000 });
+// a page change: the next remark must show the new page, not the old one
+await page.getByRole('link', { name: 'Next page' }).click();
+const navigatedAt = Date.now();
+await main.locator('#timeline .tl.speech').filter({ hasText: SENTENCES }).nth(2).waitFor({ timeout: 60_000 });
 await finish();
 const transcript = await fs.readFile(path.join(openDir, 'transcript.md'), 'utf8');
 assert.match(transcript, /`\d\d:\d\d–\d\d:\d\d` .*search button does nothing/i);
 const timeline = await fs.readFile(path.join(openDir, 'timeline.md'), 'utf8');
-assert.match(timeline, /🎙 “.*(search button|filter).*” \(\[screen\]\(speech\/\d{3}\.png\)\)/i);
+assert.match(timeline, /🎙 “.*(search button|filter).*” \(\[screen\]\(speech\/onset-\d{3}\.png\)\)/i);
 assert.match(timeline, /click button “Open menu”/);
-assert.doesNotMatch(timeline, /transcribing/, 'every utterance was transcribed or dropped by the end');
+assert.doesNotMatch(timeline, /transcribing/, 'every utterance was transcribed by the end');
+// each sentence gets the screenshot from when it was said, not the previous one's
+const speechEntries = JSON.parse(await fs.readFile(path.join(openDir, 'speech.json'), 'utf8'));
+const first = speechEntries.find(e => /search button does nothing when/i.test(e.text));
+const second = speechEntries.find(e => /filter to remember/i.test(e.text));
+assert.ok(first && second, `both sentences transcribed (${speechEntries.map(e => e.text)})`);
+assert.notEqual(first.screenshot, second.screenshot, 'separate screenshots for separate remarks');
+const shots = JSON.parse(await fs.readFile(path.join(openDir, 'speech', 'screenshots.json'), 'utf8'));
+assert.ok(shots.some(s => s.kind === 'page' && Date.parse(s.at) > navigatedAt), 'a screenshot of the new page');
+const afterNav = speechEntries.filter(e => Date.parse(e.at) > navigatedAt + 1500);
+assert.ok(afterNav.length, 'a remark after the page change');
+for (const e of afterNav) {
+  const shot = shots.find(s => s.file === e.screenshot);
+  assert.ok(shot && Date.parse(shot.at) > navigatedAt, `remark at ${e.at} shows the new page (${e.screenshot})`);
+}
+assert.ok(Date.parse(second.at) - Date.parse(first.at) > 3500, 'the second sentence is dated about 5 s after the first');
 const speechFiles = await fs.readdir(path.join(openDir, 'speech'));
-assert.ok(speechFiles.some(f => f.endsWith('.wav')) && speechFiles.some(f => f.endsWith('.png')), `audio and screenshots kept (${speechFiles})`);
+assert.ok(speechFiles.includes('session.wav') && speechFiles.some(f => f.endsWith('.png')), `the whole session's audio and screenshots kept (${speechFiles})`);
+const openSession = JSON.parse(await fs.readFile(path.join(openDir, 'session.json'), 'utf8'));
+assert.equal(openSession.audio.file, 'speech/session.wav');
+assert.equal(openSession.voice, 'open-mic');
 const handoff = await fs.readFile(path.join(openDir, 'HANDOFF.md'), 'utf8');
 assert.match(handoff, /transcript\.md/);
+
+// the session page: remarks as cards with audio, a summary, and a timeline filter
+const remark = main.locator('.note').filter({ hasText: /search button does nothing/i }).first();
+await remark.waitFor();
+await main.locator('.stats').getByText(/spoken remarks?/).waitFor();
+await main.locator('.stats').getByText('🎙 open mic').waitFor();
+// a remark plays its own part of the session recording
+const playSrc = await remark.getByRole('button', { name: '▶ Play' }).getAttribute('data-src');
+const clipStart = Number(/#t=([\d.]+),/.exec(playSrc)[1]);
+await remark.getByRole('button', { name: '▶ Play' }).click();
+await win.waitForFunction(from => state.audio && !state.audio.clip.paused && state.audio.clip.currentTime > from + 0.2, clipStart, { timeout: 10_000 });
+await remark.getByRole('button', { name: '▶ Play' }).click(); // stops it
+await main.locator('.chip', { hasText: 'Notes & speech' }).click();
+const kinds = await main.locator('#timeline .tl').evaluateAll(rows => rows.map(r => r.className));
+assert.ok(kinds.length >= 2 && kinds.every(k => /\bspeech\b|\bnote\b/.test(k)), `only notes and speech shown (${kinds})`);
+assert.ok(await main.locator('#timeline .tl.speech img.thumb').count() >= 2, 'speech rows have screenshots');
+
+// re-transcribe the finished session (the fast model here; the app uses the better one)
+win.once('dialog', d => d.accept());
+await main.getByRole('button', { name: 'Re-transcribe with the better model' }).click();
+await win.locator('#toast').getByText(/^Re-transcribed: \d+ segments?\./).waitFor({ timeout: 120_000 });
+await main.getByText(/Transcribed again with whisper-base\.en/).waitFor();
+assert.match(await fs.readFile(path.join(openDir, 'transcript.md'), 'utf8'), /search button does nothing/i);
+
+// the Microphone page: level meter and a recorded test, checked and transcribed
+await nav('Microphone').click();
+await win.locator('#mic-choice option').first().waitFor({ state: 'attached' });
+await win.waitForFunction(() => parseFloat(document.getElementById('meter-bar')?.style.width) > 0, null, { timeout: 10_000 });
+await main.getByRole('button', { name: '● Record a 4-second test' }).click();
+await main.getByText(/Sounds usable|Problems found/).waitFor({ timeout: 60_000 });
+// the fixture is clear speech: it must pass, and be heard as words from it
+assert.match(await main.textContent(), /✓ Sounds usable/);
+assert.match(await main.textContent(), /Transcribed: “.*(search|button|click|filter|remember|choice).*”/i);
+assert.match(await main.textContent(), /% of the speech above 1\.5 kHz/);
 
 // --- push-to-talk: a press becomes a 🎙 Spoken note, transcribed after release
 const pttDir = await start('push-to-talk');
