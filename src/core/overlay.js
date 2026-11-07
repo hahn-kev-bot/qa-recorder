@@ -26,6 +26,13 @@
   // registered at injection time, before the app's scripts run
   for (const type of SHIELDED) {
     window.addEventListener(type, e => {
+      // push-to-talk key: held anywhere in the page, never seen by the app
+      if ((type === 'keydown' || type === 'keyup') && ui && config.voice === 'push-to-talk' && e.key === config.talkKey) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (type === 'keyup' || !e.repeat) ui.talk(type === 'keydown');
+        return;
+      }
       if (type === 'keydown' && HOTKEYS[e.key] && ui) {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -48,6 +55,95 @@
     }, true);
   }
 
+  // ---- action timeline: what the tester did in the page, described the way a person would say it ----
+  const config = window.__qaRecorderConfig ?? {};
+  const isOurs = e => !!host && (e.composedPath().includes(host) || e.target === host);
+  const sendAction = action => { void window.__qaRecorderAction?.({ ...action, url: location.href })?.catch?.(() => {}); };
+  const INTERACTIVE = 'a[href],button,input,select,textarea,summary,label,[role],[contenteditable=""],[contenteditable="true"],[tabindex]';
+  const ROLE_BY_TAG = { a: 'link', button: 'button', select: 'combobox', textarea: 'textbox', summary: 'button', img: 'image', label: 'label' };
+  const clip = s => (s ?? '').replace(/\s+/g, ' ').trim().slice(0, 60);
+
+  function roleOf(el) {
+    const explicit = el.getAttribute('role');
+    if (explicit) return explicit.split(' ')[0];
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'input') {
+      const type = (el.getAttribute('type') ?? 'text').toLowerCase();
+      return { checkbox: 'checkbox', radio: 'radio', button: 'button', submit: 'button', reset: 'button', range: 'slider', search: 'searchbox' }[type] ?? 'textbox';
+    }
+    if (el.isContentEditable) return 'textbox';
+    return ROLE_BY_TAG[tag] ?? tag;
+  }
+
+  function nameOf(el) {
+    const aria = el.getAttribute('aria-label');
+    if (aria) return clip(aria);
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const text = labelledBy.split(' ').map(id => document.getElementById(id)?.innerText ?? '').join(' ');
+      if (clip(text)) return clip(text);
+    }
+    if (el.labels?.length) return clip(el.labels[0].innerText);
+    const tag = el.tagName.toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag) || el.isContentEditable) {
+      return clip(el.getAttribute('placeholder') ?? el.getAttribute('title') ?? el.getAttribute('name') ?? '');
+    }
+    return clip(el.innerText || el.getAttribute('title') || el.getAttribute('alt') || el.getAttribute('value') || '');
+  }
+
+  /** The nearest dialog, menu or labelled region: "in dialog 'Filters'". */
+  function insideOf(el) {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const role = p.getAttribute('role') ?? (p.tagName === 'DIALOG' ? 'dialog' : p.tagName === 'NAV' ? 'navigation' : null);
+      if (role && ['dialog', 'alertdialog', 'menu', 'listbox', 'navigation', 'toolbar', 'tabpanel', 'region', 'form'].includes(role)) {
+        return { role, name: clip(p.getAttribute('aria-label') ?? '') };
+      }
+    }
+    return undefined;
+  }
+
+  function brief(el) {
+    const target = el.closest?.(INTERACTIVE) ?? el;
+    return { role: roleOf(target), name: nameOf(target), inside: insideOf(target), ...(target.id && stableId(target.id) ? { id: target.id } : {}) };
+  }
+
+  function fieldValue(el) {
+    if (el.type === 'password') return { hidden: 'password' };
+    if (el.type === 'checkbox' || el.type === 'radio') return { checked: el.checked };
+    if (el.tagName === 'SELECT') return { value: clip([...el.selectedOptions].map(o => o.text).join(', ')) };
+    const value = el.isContentEditable ? el.innerText : el.value;
+    if (config.typedText === false) return { length: (value ?? '').length };
+    return { value: (value ?? '').slice(0, 200) };
+  }
+
+  const editStart = new WeakMap(); // contenteditable text when it got focus, to log only real edits
+  window.addEventListener('click', e => {
+    if (isOurs(e) || ui?.busy() || !(e.target instanceof Element)) return;
+    sendAction({ action: 'click', target: brief(e.target) });
+  }, true);
+  window.addEventListener('change', e => {
+    const el = e.target;
+    if (isOurs(e) || !(el instanceof Element) || !['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return;
+    sendAction({ action: 'input', target: brief(el), ...fieldValue(el) });
+  }, true);
+  window.addEventListener('focusin', e => {
+    if (e.target instanceof HTMLElement && e.target.isContentEditable && !isOurs(e)) editStart.set(e.target, e.target.innerText);
+  }, true);
+  window.addEventListener('focusout', e => {
+    const el = e.target;
+    if (!(el instanceof HTMLElement) || !editStart.has(el) || isOurs(e)) return;
+    if (editStart.get(el) !== el.innerText) sendAction({ action: 'input', target: brief(el), ...fieldValue(el) });
+    editStart.delete(el);
+  }, true);
+  window.addEventListener('keydown', e => {
+    if (e.repeat || isOurs(e) || HOTKEYS[e.key] || e.key === config.talkKey) return;
+    const combo = e.ctrlKey || e.altKey || e.metaKey;
+    if (!combo && !['Enter', 'Escape'].includes(e.key)) return;
+    if (['Control', 'Alt', 'Meta', 'Shift'].includes(e.key)) return;
+    const key = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.metaKey && 'Meta', e.shiftKey && 'Shift', e.key.length === 1 ? e.key.toUpperCase() : e.key].filter(Boolean).join('+');
+    sendAction({ action: 'key', key, target: e.target instanceof Element && e.target !== document.body ? brief(e.target) : undefined });
+  }, true);
+
   function mount() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', mount, { once: true });
     host = document.createElement('div');
@@ -68,6 +164,9 @@
   .bar button.finish { background: #374151; }
   .bar button.finish.armed { background: #dc2626; }
   .count { padding: 0 6px; color: #9ca3af; }
+  .bar button.mic.talking { background: #dc2626; }
+  .bar button.mic.live { color: #86efac; }
+  .bar button.mic.muted { color: #9ca3af; }
   .layer { position: fixed; inset: 0; pointer-events: auto; cursor: crosshair; background: #0000000d; }
   .sel { position: fixed; border: 2px solid #3b82f6; background: #3b82f622; pointer-events: none; }
   .hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff;
@@ -89,12 +188,16 @@
   <button data-act="region" title="Drag a region (F9)">▭ Region</button>
   <button data-act="note" title="General note (F7)">✎ Note</button>
   <span class="count" title="Notes saved">0</span>
+  ${config.voice === 'push-to-talk' ? `<button data-act="mic" class="mic" title="Hold to talk (or hold ${config.talkKey}); each press becomes a spoken note">🎙 Hold ${config.talkKey}</button>` : ''}
+  ${config.voice === 'open-mic' ? '<button data-act="mic" class="mic live" title="Open mic: everything you say is transcribed. Click to mute.">🎙 Live</button>' : ''}
   <button data-act="side" title="Move the toolbar to the other side">⇄</button>
   <button data-act="finish" class="finish" title="Finish the session and close the app">Finish</button>
 </div>`;
     const bar = root.querySelector('.bar');
     const countEl = root.querySelector('.count');
     const finishBtn = root.querySelector('.finish');
+    const micBtn = root.querySelector('.mic');
+    let talking = false;
     let side = localStorage.getItem('qa-recorder-side') === 'right' ? 'right' : 'left';
     let busy = false;
     let finishArmed = null;
@@ -112,8 +215,34 @@
       },
       busy: () => busy && !!modeHandler,
       cancel: () => done(),
+      /** Push-to-talk: down/up from the key or the 🎙 button. */
+      talk(down) {
+        if (down === talking) return;
+        talking = down;
+        micBtn?.classList.toggle('talking', down);
+        if (micBtn) micBtn.textContent = down ? '● Talking…' : `🎙 Hold ${config.talkKey}`;
+        void window.__qaRecorderTalk?.(down).then(r => { if (r) countEl.textContent = String(r.count); }).catch(() => {});
+      },
       handle(e) {
         const el = e.composedPath()[0];
+        if (micBtn && el instanceof Element && micBtn.contains(el)) {
+          if (config.voice === 'push-to-talk') {
+            if (e.type === 'pointerdown') {
+              micBtn.setPointerCapture(e.pointerId);
+              ui.talk(true);
+            } else if (e.type === 'pointerup' || e.type === 'pointercancel') {
+              ui.talk(false);
+            }
+          } else if (e.type === 'click') {
+            const muted = !micBtn.classList.contains('muted');
+            void window.__qaRecorderMute?.(muted).then(r => {
+              micBtn.classList.toggle('muted', r.muted);
+              micBtn.classList.toggle('live', !r.muted);
+              micBtn.textContent = r.muted ? '🔇 Muted' : '🎙 Live';
+            });
+          }
+          return;
+        }
         if (e.type === 'click' && el instanceof Element && bar.contains(el)) {
           const act = el.closest('button')?.dataset.act;
           if (act === 'side') setSide(side === 'left' ? 'right' : 'left');

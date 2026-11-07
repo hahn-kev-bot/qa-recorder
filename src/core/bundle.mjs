@@ -1,19 +1,63 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const KIND_LABEL = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like' };
+const KIND_LABEL = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken' };
 export const ERROR_TYPES = new Set(['console.error', 'pageerror', 'requestfailed', 'http']);
 const NEARBY_MS = 60_000;
 
-/** Rewrites the whole session folder; called after every note so a crash loses nothing. */
-export async function writeBundle({ sessionDir, session, notes, events }) {
+const STEPS_BEFORE_NOTE = 10;
+
+/**
+ * Rewrites the whole session folder; called after every note so a crash loses nothing.
+ * `speech` holds transcribed utterances: { id, at, end, text, mode: 'push-to-talk' | 'open-mic', screenshot }.
+ */
+export async function writeBundle({ sessionDir, session, notes, events, speech = [] }) {
   const errors = events.filter(e => ERROR_TYPES.has(e.type)).length;
-  const summary = { ...session, notes: notes.length, kinds: countKinds(notes), errors };
+  const actions = events.filter(e => e.type === 'action').length;
+  const summary = { ...session, notes: notes.length, kinds: countKinds(notes), errors, actions, utterances: speech.length };
   await fs.writeFile(path.join(sessionDir, 'session.json'), JSON.stringify(summary, null, 2));
   await fs.writeFile(path.join(sessionDir, 'notes.json'), JSON.stringify(notes, null, 2));
   await fs.writeFile(path.join(sessionDir, 'events.json'), JSON.stringify(events, null, 2));
   await fs.writeFile(path.join(sessionDir, 'feedback.md'), feedbackMarkdown(session, notes, events));
-  await fs.writeFile(path.join(sessionDir, 'HANDOFF.md'), handoffPrompt(session, sessionDir));
+  await fs.writeFile(path.join(sessionDir, 'timeline.md'), timelineMarkdown(session, notes, events, speech));
+  if (speech.length) {
+    await fs.writeFile(path.join(sessionDir, 'speech.json'), JSON.stringify(speech, null, 2));
+    await fs.writeFile(path.join(sessionDir, 'transcript.md'), transcriptMarkdown(session, speech));
+  }
+  await fs.writeFile(path.join(sessionDir, 'HANDOFF.md'), handoffPrompt(session, sessionDir, { speech: speech.length > 0 }));
+}
+
+const quote = s => `“${s}”`;
+
+/** "click button “Toggle filters” in dialog “Filters”" */
+export function describeAction(a) {
+  const t = a.target;
+  const what = t ? `${t.role}${t.name ? ` ${quote(t.name)}` : ''}${t.inside ? ` in ${t.inside.role}${t.inside.name ? ` ${quote(t.inside.name)}` : ''}` : ''}` : '';
+  switch (a.action) {
+    case 'click': return `click ${what}`;
+    case 'input': {
+      if (a.hidden) return `typed a ${a.hidden} into ${what}`;
+      if (a.checked !== undefined) return `${a.checked ? 'checked' : 'unchecked'} ${what}`;
+      if (a.length !== undefined) return `typed ${a.length} characters into ${what}`;
+      return a.value ? `set ${what} to ${quote(a.value)}` : `cleared ${what}`;
+    }
+    case 'key': return `pressed ${a.key}${what ? ` in ${what}` : ''}`;
+    default: return `${a.action} ${what}`;
+  }
+}
+
+/** Actions and page changes between the previous note and this one: how the tester got here. */
+function stepsBefore(note, previous, events) {
+  const from = previous ? Date.parse(previous.at) : 0;
+  const to = Date.parse(note.at);
+  const steps = [];
+  for (const e of events) {
+    const at = Date.parse(e.at);
+    if (at <= from || at > to) continue;
+    if (e.type === 'action' && !e.setup) steps.push(describeAction(e));
+    else if (e.type === 'navigate' && !e.setup && steps.at(-1) !== `went to ${shortUrl(e.url)}`) steps.push(`went to ${shortUrl(e.url)}`);
+  }
+  return steps;
 }
 
 const countKinds = notes => notes.reduce((acc, n) => ({ ...acc, [n.kind]: (acc[n.kind] ?? 0) + 1 }), {});
@@ -41,12 +85,23 @@ function feedbackMarkdown(session, notes, events) {
   ];
   if (session.error) lines.push(`> The session hit an error: ${oneLine(session.error)}`, '');
   if (!notes.length) lines.push('_No notes yet._', '');
-  for (const n of notes) {
-    lines.push(`## ${n.id}. ${KIND_LABEL[n.kind] ?? n.kind}: ${firstLine(n.text) || '(no text)'}`, '');
+  for (const [i, n] of notes.entries()) {
+    lines.push(`## ${n.id}. ${KIND_LABEL[n.kind] ?? n.kind}: ${noteTitle(n)}`, '');
     lines.push(`At ${n.at} on \`${shortUrl(n.url)}\``, '');
     if (n.text && n.text.includes('\n')) lines.push(n.text.split('\n').map(l => `> ${l}`).join('\n'), '');
-    if (n.screenshots.crop) lines.push(`![note ${n.id}](${n.screenshots.crop})`, '');
-    lines.push(`Full window: [${n.screenshots.full}](${n.screenshots.full})`, '');
+    const steps = stepsBefore(n, notes[i - 1], events);
+    if (steps.length) {
+      lines.push(`Steps before this note${steps.length > STEPS_BEFORE_NOTE ? ` (last ${STEPS_BEFORE_NOTE} of ${steps.length}; all in timeline.md)` : ''}:`, '');
+      steps.slice(-STEPS_BEFORE_NOTE).forEach((s, j) => lines.push(`${j + 1}. ${s}`));
+      lines.push('');
+    }
+    if (n.screenshots.crop) {
+      lines.push(`![note ${n.id}](${n.screenshots.crop})`, '');
+      lines.push(`Full window: [${n.screenshots.full}](${n.screenshots.full})`, '');
+    } else {
+      lines.push(`![note ${n.id}](${n.screenshots.full})`, '');
+    }
+    if (n.audio) lines.push(`Spoken (push-to-talk); audio: [${n.audio}](${n.audio})`, '');
     if (n.target) {
       const t = n.target;
       lines.push('Target element:', '', '```yaml');
@@ -75,6 +130,82 @@ function feedbackMarkdown(session, notes, events) {
   return lines.join('\n');
 }
 
+/** mm:ss since the session started. */
+function clock(session, iso) {
+  const s = Math.max(0, Math.round((Date.parse(iso) - Date.parse(session.startedAt)) / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Everything in order, on one clock: what the tester did, said and noted, and what went wrong. */
+/**
+ * The session in order, one row per thing that happened: { at, clock, kind, text, link?, setup? }.
+ * kind: action | navigate | error | note | speech | end. Plain text; the markdown and the app format it.
+ */
+export function timelineRows(session, notes, events, speech = []) {
+  const rows = [];
+  let lastUrl;
+  for (const e of events) {
+    if (e.type === 'action') rows.push({ at: e.at, kind: 'action', text: describeAction(e), setup: e.setup });
+    else if (e.type === 'navigate') {
+      const url = shortUrl(e.url);
+      if (url !== lastUrl) rows.push({ at: e.at, kind: 'navigate', text: `went to ${url}`, setup: e.setup });
+      lastUrl = url;
+    } else if (ERROR_TYPES.has(e.type)) rows.push({ at: e.at, kind: 'error', text: `${e.type} ${describeEvent(e)}` });
+    else if (e.type === 'end') rows.push({ at: e.at, kind: 'end', text: 'session ended' });
+  }
+  for (const n of notes) {
+    const summary = `${KIND_LABEL[n.kind] ?? n.kind}: ${noteTitle(n)}`;
+    rows.push({ at: n.at, kind: 'note', id: n.id, summary, text: `note ${n.id} ${summary}`, link: n.screenshots.crop ?? n.screenshots.full });
+  }
+  for (const s of speech) {
+    if (s.mode === 'push-to-talk') continue; // those are notes already
+    rows.push({ at: s.at, kind: 'speech', text: s.text ? quote(s.text) : '(transcribing…)', link: s.screenshot });
+  }
+  return rows
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .map(r => ({ ...r, clock: clock(session, r.at) }));
+}
+
+function timelineLine(r) {
+  switch (r.kind) {
+    case 'action': return `${r.text}${r.setup ? ' _(setup step)_' : ''}`;
+    case 'navigate': return `${r.text.replace(/^went to (.*)$/, 'went to `$1`')}${r.setup ? ' _(setup step)_' : ''}`;
+    case 'error': return `⚠ ${r.text}`;
+    case 'note': return `**note ${r.id}** ${r.summary} ([screenshot](${r.link}))`;
+    case 'speech': return `🎙 ${r.text}${r.link ? ` ([screen](${r.link}))` : ''}`;
+    default: return r.text;
+  }
+}
+
+function timelineMarkdown(session, notes, events, speech) {
+  const rows = timelineRows(session, notes, events, speech);
+  return [
+    `# Timeline: ${session.target.name}`,
+    '',
+    `Session ${session.id}. Times are minutes:seconds since ${session.startedAt}.`,
+    ...(session.trace?.length ? ['', `Playwright trace: ${session.trace.map(f => `[${f}](${f})`).join(', ')} (open with \`npx playwright show-trace <file>\`).`] : []),
+    '',
+    ...rows.map(r => `- \`${r.clock}\` ${timelineLine(r)}`),
+    '',
+  ].join('\n');
+}
+
+/** Open-mic speech as one running transcript. */
+function transcriptMarkdown(session, speech) {
+  return [
+    `# Transcript: ${session.target.name}`,
+    '',
+    `Session ${session.id}. Times are minutes:seconds since ${session.startedAt}. What the tester did at each moment is in timeline.md.`,
+    '',
+    // one line per Whisper segment, so long utterances keep finer timestamps
+    ...speech.flatMap(s => {
+      const prefix = s.mode === 'push-to-talk' ? `(push-to-talk, note ${s.noteId}) ` : '';
+      const parts = s.segments?.length ? s.segments : [{ at: s.at, end: s.end, text: s.text || '_(transcribing…)_' }];
+      return parts.map((p, i) => `\`${clock(session, p.at)}–${clock(session, p.end ?? p.at)}\` ${i === 0 ? prefix : ''}${p.text}`);
+    }).flatMap(l => [l, '']),
+  ].join('\n');
+}
+
 function near(note, event) {
   const d = Date.parse(note.at) - Date.parse(event.at);
   return d >= -2000 && d <= NEARBY_MS;
@@ -90,10 +221,11 @@ function shortUrl(url) {
 }
 
 const firstLine = s => (s ?? '').split('\n')[0].slice(0, 100);
+const noteTitle = n => (n.transcribing ? '(transcribing…)' : firstLine(n.text) || '(no text)');
 const oneLine = s => s.replace(/\s+/g, ' ').slice(0, 300);
 
 /** The prompt a coding agent gets. It decides with the tester how to split the work. */
-function handoffPrompt(session, sessionDir) {
+function handoffPrompt(session, sessionDir, { speech }) {
   const { workspace, hints } = session.handoff ?? {};
   const build = buildLine(session.build);
   return `# QA session handoff
@@ -106,7 +238,10 @@ ${workspace ? `Work in \`${workspace}\` and follow its AGENTS.md / CLAUDE.md fil
 ${build ? `- Build tested: ${build}\n` : ''}
 ## Steps
 
-1. Read \`feedback.md\` and every screenshot it links. \`events.json\` has the full error and navigation log if a note needs it.
+1. Read \`feedback.md\` and every screenshot it links. Each note lists the steps the tester took before it; the
+   whole session (clicks, typing, page changes${speech ? ', what the tester said' : ''}, errors) is in \`timeline.md\`${speech ? `, and the
+   spoken commentary on its own is in \`transcript.md\`. Spoken remarks are feedback too, even when no note was saved` : ''}.
+   \`events.json\` has the raw log.
 2. For each note, find the code involved: search for the target element's text, aria-label, placeholder or data
    attributes. Notes marked 👍 Like are things to keep; don't change those.
 3. Check whether the code has changed since the build that was tested, and say if a note looks already fixed.

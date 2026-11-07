@@ -52,3 +52,4 @@ Add `ifVisible` to run a step only when something is on screen, `optional: true`
 - Never put real passwords or tokens in the file. Use `${env:NAME}` and tell the tester which variable to set.
 - Keep tests away from production data. If you can't, say so plainly and suggest a test account.
 - Leave out anything you don't need: the smallest target is a name and a `browser` launch with a URL.
+- If testers will type real personal data, set `capture.typedText: false` so the timeline records only lengths.

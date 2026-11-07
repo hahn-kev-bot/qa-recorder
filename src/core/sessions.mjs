@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { listBuilds } from './builds.mjs';
+import { timelineRows } from './bundle.mjs';
 import { dirSize } from './fsutil.mjs';
 import { sessionsDir } from './paths.mjs';
 
@@ -42,11 +43,10 @@ export async function getSession(id) {
   const dir = inSessions(id);
   const session = await readJson(path.join(dir, 'session.json'));
   if (!session) throw new Error(`No session ${id}`);
-  return {
-    session: { ...session, dir },
-    notes: await readJson(path.join(dir, 'notes.json'), []),
-    events: await readJson(path.join(dir, 'events.json'), []),
-  };
+  const notes = await readJson(path.join(dir, 'notes.json'), []);
+  const events = await readJson(path.join(dir, 'events.json'), []);
+  const speech = await readJson(path.join(dir, 'speech.json'), []);
+  return { session: { ...session, dir }, notes, events, speech, timeline: timelineRows(session, notes, events, speech) };
 }
 
 export async function deleteSession(id) {

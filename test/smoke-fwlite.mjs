@@ -3,10 +3,16 @@
 // popup, the side toggle, and Finish. Usage: node test/smoke-fwlite.mjs [--exe <FwLiteMaui.exe>]
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { startSession } from '../src/core/recorder.mjs';
-import { getTarget } from '../src/core/targets.mjs';
+import { buildsDir } from '../src/core/paths.mjs';
+
+// sessions go to a temp folder, never your real one; only the (big) build download is shared
+process.env.QA_RECORDER_BUILDS = buildsDir();
+process.env.QA_RECORDER_HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-recorder-smoke-fwlite-'));
+const { startSession } = await import('../src/core/recorder.mjs');
+const { getTarget } = await import('../src/core/targets.mjs');
 
 const { values } = parseArgs({ options: { exe: { type: 'string' } } });
 const target = await getTarget('fwlite-maui');

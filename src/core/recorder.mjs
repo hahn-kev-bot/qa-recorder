@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeBundle } from './bundle.mjs';
+import { describeAction, writeBundle } from './bundle.mjs';
+import { createSessionVoice, VOICE_MODES } from './speech/session-voice.mjs';
+import { startTrace } from './trace.mjs';
 import { resolveBuild } from './builds.mjs';
 import { freePort, launch } from './launch.mjs';
 import { buildsDir, sessionsDir } from './paths.mjs';
@@ -19,7 +21,14 @@ const stamp = d => d.toISOString().slice(0, 19).replace(/[:T]/g, '-');
  * `ready` resolves once setup has run and the tester can start; `done` resolves with { notes, events } when the
  * session ends (Finish on the toolbar, finish(), or the app/browser closing).
  */
-export async function startSession(target, { runId, latest = true, exe, log } = {}) {
+export const TALK_KEY = 'F6';
+
+/**
+ * voice: 'off' | 'push-to-talk' | 'open-mic'. With voice on, the caller feeds microphone audio (16 kHz mono)
+ * through controller.voice.push(samples, startedAtMs); the desktop app does this from its window.
+ */
+export async function startSession(target, { runId, latest = true, exe, log, voice = 'off' } = {}) {
+  if (!VOICE_MODES.includes(voice)) throw new Error(`voice must be one of ${VOICE_MODES.join(', ')}`);
   const startedAt = new Date();
   const id = `${stamp(startedAt)}_${target.id}`;
   const dir = path.join(sessionsDir(), id);
@@ -38,7 +47,18 @@ export async function startSession(target, { runId, latest = true, exe, log } = 
   };
   const notes = [];
   const events = [];
-  const flush = () => writeBundle({ sessionDir: dir, session: { ...session, status: controller.status }, notes, events });
+  const speech = [];
+  // one write at a time: overlapping writes of the same files could interleave
+  let writing = Promise.resolve();
+  const write = () => writeBundle({ sessionDir: dir, session: { ...session, status: controller.status }, notes, events, speech });
+  const flush = () => (writing = writing.then(write, write));
+  // actions arrive often; save them soon, not on every click
+  let flushTimer;
+  const flushSoon = () => {
+    clearTimeout(flushTimer);
+    flushTimer = setTimeout(() => { flush().catch(() => {}); }, 1000);
+  };
+  controller.speech = speech;
   const setStatus = async s => {
     controller.status = s;
     emitter.emit('status', s);
@@ -52,6 +72,7 @@ export async function startSession(target, { runId, latest = true, exe, log } = 
   controller.ready.catch(() => {});
   controller.done = (async () => {
     let app;
+    let trace;
     try {
       const { build, dir: buildDir } = exe
         ? { build: { source: 'local', sha: 'local', title: exe } }
@@ -81,12 +102,39 @@ export async function startSession(target, { runId, latest = true, exe, log } = 
       app = await launch(launchCfg, { buildDir, appData, port: vars.port, targetId: target.id });
       controller.page = app.page;
       controller.context = app.context;
+      const capture = target.config.capture ?? {};
+      if (voice !== 'off') {
+        say(`Voice: ${voice === 'push-to-talk' ? `push-to-talk (hold ${TALK_KEY} in the app, or hold 🎙 on its toolbar)` : 'open mic (🎙 on the toolbar mutes)'}.`);
+        controller.voice = createSessionVoice({
+          mode: voice, dir, notes, speech, flush,
+          // the toolbar stays out of the screenshot
+          screenshot: file => app.page.screenshot({ path: file, style: '#qa-recorder-root { display: none !important; }' }),
+          currentUrl: () => app.page.url(),
+          onNote: n => emitter.emit('note', n),
+          onSpeech: s => emitter.emit('speech', s),
+          mark: label => trace?.mark(label),
+          log: say,
+        });
+      }
       await attachRecorder(app.context, {
         dir, notes, events, flush,
-        ignore: target.config.capture?.ignore ?? [],
-        onNote: n => emitter.emit('note', n),
+        ignore: capture.ignore ?? [],
+        overlayConfig: { typedText: capture.typedText ?? true, voice, talkKey: TALK_KEY },
+        getVoice: () => controller.voice,
+        onNote: n => { emitter.emit('note', n); trace?.mark(`note ${n.id} (${n.kind}): ${(n.text ?? '').split('\n')[0]}`); },
+        isSetup: () => controller.status === 'starting',
+        onAction: a => {
+          emitter.emit('action', a);
+          trace?.mark(describeAction(a));
+          flushSoon();
+        },
         onFinish: () => requestFinish(),
       });
+      if (capture.trace !== false) {
+        trace = await startTrace(app.context, dir, { title: `${target.config.name} ${id}`, log: say })
+          .catch(e => { say(`No trace for this session: ${e.message.split('\n')[0]}`); return undefined; });
+        controller.trace = trace;
+      }
 
       if (target.config.setup?.length) {
         say('Running setup steps...');
@@ -106,6 +154,16 @@ export async function startSession(target, { runId, latest = true, exe, log } = 
     } finally {
       events.push({ at: new Date().toISOString(), type: 'end' });
       session.endedAt = new Date().toISOString();
+      if (controller.voice) {
+        say('Finishing transcription...');
+        await controller.voice.stop();
+      }
+      if (trace) {
+        const timeout = new Promise(resolve => setTimeout(resolve, 20_000));
+        await Promise.race([trace.stop(), timeout]);
+        session.trace = [...trace.files];
+        if (!session.trace.length) say('The trace was lost: the app closed before it could be saved.');
+      }
       await setStatus(session.error && !notes.length ? 'failed' : 'ended').catch(() => {});
       await app?.close();
     }
@@ -116,12 +174,18 @@ export async function startSession(target, { runId, latest = true, exe, log } = 
   return controller;
 }
 
-/** Injects the toolbar and records notes, errors and navigation. */
-async function attachRecorder(context, { dir, notes, events, flush, ignore, onNote, onFinish }) {
+/** Injects the toolbar and records notes, actions, errors and navigation. */
+async function attachRecorder(context, { dir, notes, events, flush, ignore, overlayConfig, getVoice, isSetup, onNote, onAction, onFinish }) {
   const record = (type, data) => {
-    const event = { at: new Date().toISOString(), type, ...data };
+    // while the setup steps run, what happens is theirs, not the tester's
+    const event = { at: new Date().toISOString(), type, ...data, ...(isSetup() ? { setup: true } : {}) };
     if (!ignore.some(rule => matchesRule(rule, event))) events.push(event);
+    return event;
   };
+  await context.exposeBinding('__qaRecorderAction', (_source, action) => {
+    if (!action || typeof action !== 'object') return;
+    onAction(record('action', action));
+  });
   await context.exposeBinding('__qaRecorderNote', async ({ page: source }, note) => {
     const id = String(notes.length + 1).padStart(3, '0');
     const full = `notes/${id}-full.png`;
@@ -138,6 +202,18 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, onNo
     return { id, count: notes.length };
   });
   await context.exposeBinding('__qaRecorderFinish', () => onFinish());
+  // voice: push-to-talk key/button, and the open-mic mute toggle; both answer with the state to show
+  await context.exposeBinding('__qaRecorderTalk', (_source, down) => {
+    getVoice()?.talk(!!down);
+    return { count: notes.length };
+  });
+  await context.exposeBinding('__qaRecorderMute', (_source, muted) => {
+    const voice = getVoice();
+    if (voice && typeof muted === 'boolean') voice.setMuted(muted);
+    return { muted: voice?.muted ?? false };
+  });
+  const configScript = `window.__qaRecorderConfig = ${JSON.stringify(overlayConfig)};`;
+  await context.addInitScript({ content: configScript });
   await context.addInitScript({ content: overlaySource });
 
   const watch = p => {
@@ -154,7 +230,7 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, onNo
   };
   for (const p of context.pages()) {
     watch(p);
-    await p.evaluate(overlaySource).catch(() => {}); // already loaded, so the init script missed it
+    await p.evaluate(`${configScript}\n${overlaySource}`).catch(() => {}); // already loaded, so the init scripts missed it
   }
   context.on('page', watch);
 }

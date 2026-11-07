@@ -58,6 +58,27 @@ the browser also ends it.
 The toolbar is invisible to the page: it swallows its own clicks, keys and focus changes before the page's listeners
 run, so an open popup or menu stays open while you capture a note about it.
 
+Every session also records, without you doing anything:
+
+- **A timeline** of what you did, in words: "click button “Toggle filters”", "set textbox “Search” to “kettle”",
+  Enter/Escape and shortcuts, page changes, errors. Each note in feedback.md lists the steps before it; `timeline.md`
+  has the whole session. Typed values are recorded (never passwords); `capture.typedText: false` records only lengths.
+- **A Playwright trace**: screenshots whenever the screen changes, network and console, with the timeline as named
+  markers. The session page's **trace** button opens it in Playwright's Trace Viewer.
+
+### Voice
+
+Pick it next to **Start session** (remembered per target). The microphone is recorded by the desktop app, and speech is
+transcribed on your machine with Whisper (base.en, downloaded once, about 80 MB, into `<data>/models`).
+
+| Mode | How | Result |
+|---|---|---|
+| Push-to-talk | hold F6 in the app, or hold 🎙 on its toolbar | each press becomes a 🎙 Spoken note with a screenshot from when you pressed |
+| Open mic | talk; 🎙 on the toolbar mutes | each utterance goes into the timeline with a screenshot from when you started speaking, and into `transcript.md` |
+
+The audio of each utterance is kept in `speech/` (silence is dropped). Voice needs the desktop app; the CLI has no
+microphone.
+
 ## Targets
 
 A target is a JSON file. Bundled ones are in `configs/`; yours are in `<data>/targets/` (an edited bundled target is
@@ -84,7 +105,7 @@ in this repo.
 | `build` | `github-actions` (repo, workflow, branch, artifact; latest successful run, cached) or `local` (a folder) |
 | `launch` | `browser` (url), `server` (start exe, wait for readyUrl, open url), `webview2` (Windows WebView2 app), `cdp` (Electron app with `--remote-debugging-port=${port}`, or attach to `cdpUrl`) |
 | `setup` | steps after attaching: `goto`, `navigate`, `click`, `fill`, `press`, `waitFor`, `waitForUrl`, `wait`, `script`; with `ifVisible`, `optional`, `timeout` |
-| `capture.ignore` | leave matching events out of the error log (`type`, `text`, `url`; `*` wildcard) |
+| `capture` | `ignore`: leave matching events out of the error log (`type`, `text`, `url`; `*` wildcard). `typedText`: false to record only lengths. `trace`: false to skip the Playwright trace |
 | `handoff` | `workspace`, `context`, `hints` for HANDOFF.md |
 
 Strings can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${buildCache}`, `${port}`, `${arch}`,
@@ -100,7 +121,8 @@ Under `%LOCALAPPDATA%\qa-recorder` (or `~/.cache/qa-recorder`; set `QA_RECORDER_
 
 | Folder | Contents |
 |---|---|
-| `sessions/<time>_<target>/` | `feedback.md`, `HANDOFF.md`, `notes/` screenshots, `events.json` (errors, navigation), `session.json`, `.app-data/` (the app's data for this session) |
+| `sessions/<time>_<target>/` | `feedback.md`, `timeline.md`, `transcript.md` (open mic), `HANDOFF.md`, `notes/` and `speech/` screenshots and audio, `trace/` (Playwright trace chunks), `events.json` (actions, errors, navigation), `session.json`, `.app-data/` (the app's data for this session) |
+| `models/` | the speech model (`QA_RECORDER_MODELS` moves it) |
 | `builds/` | downloaded CI artifacts |
 | `targets/` | your targets |
 | `profiles/` | browser profiles for targets with `"profile": "persistent"` |
@@ -124,10 +146,11 @@ npm run smoke:url      # website target end to end (opens Chrome/Edge)
 npm run smoke:gui      # the desktop app end to end (opens the app and browsers)
 npm run smoke:fwlite   # Windows: FW Lite's latest develop build end to end
 npm run smoke:dogfood  # the qa-recorder target: this app recording itself
+npm run smoke:voice    # open mic and push-to-talk, with a recorded voice as the microphone
 ```
 
 ## Not yet
 
 - Native windows and dialogs (file pickers, title bars) are outside the web view, so the toolbar can't see them.
 - A packaged build of the desktop app; for now run it from a clone.
-- Ideas: rrweb replay of the session, hold-to-talk voice notes transcribed locally.
+- rrweb replay, if the trace's frames turn out too coarse.

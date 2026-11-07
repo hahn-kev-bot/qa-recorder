@@ -2,7 +2,54 @@
 // Every button has data-action; one click listener dispatches to `actions`.
 'use strict';
 
-const KIND = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like' };
+const KIND = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken' };
+const VOICE_OPTIONS = [['off', '🔇 No voice'], ['push-to-talk', '🎙 Push-to-talk (F6)'], ['open-mic', '🎙 Open mic']];
+
+/** The voice choice is remembered per target. localStorage can be unavailable; then it is just not remembered. */
+function voiceFor(targetId) {
+  try {
+    return localStorage.getItem(`voice:${targetId}`) ?? 'off';
+  } catch {
+    return 'off';
+  }
+}
+function rememberVoice(targetId, voice) {
+  try {
+    localStorage.setItem(`voice:${targetId}`, voice);
+  } catch { /* not remembered */ }
+}
+
+// ---------- microphone: captured here (the app under test can't ask for it) and streamed to the session ----------
+
+const mics = new Map(); // session id → { stop }
+
+async function openMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  return stream;
+}
+
+async function startMic(sessionId, stream, voice) {
+  const ctx = new AudioContext({ sampleRate: 16000 });
+  await ctx.audioWorklet.addModule('mic-worklet.js');
+  const source = ctx.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(ctx, 'pcm-capture');
+  node.port.onmessage = e => {
+    const samples = e.data;
+    // the block ended just now; date its first sample
+    window.qa.sendAudio(sessionId, samples, Date.now() - (samples.length / 16) - ctx.baseLatency * 1000);
+  };
+  source.connect(node);
+  mics.set(sessionId, {
+    voice,
+    stop() {
+      stream.getTracks().forEach(track => track.stop());
+      void ctx.close();
+      mics.delete(sessionId);
+    },
+  });
+}
 const ERROR_TYPES = ['console.error', 'pageerror', 'requestfailed', 'http'];
 
 const state = {
@@ -162,6 +209,9 @@ function targetView(t) {
         <div class="muted small">${t.source === 'bundled' ? 'Bundled target' : t.overrides ? 'Your edited copy of a bundled target' : 'Your target'} · ${t.launchType}${t.url ? html` · <span class="mono">${t.url}</span>` : ''}</div>
       </div>
       <button class="btn" data-action="edit" data-id="${t.id}">Edit config</button>
+      ${running ? '' : html`<select id="voice-choice" title="Voice for this session" aria-label="Voice">
+          ${VOICE_OPTIONS.map(([value, label]) => html`<option value="${value}" ${voiceFor(t.id) === value ? raw('selected') : ''}>${label}</option>`)}
+        </select>`}
       ${running
         ? html`<button class="btn primary" data-action="go" data-kind="session" data-id="${running.id}">View running session</button>`
         : html`<button class="btn primary" data-action="start" data-id="${t.id}" ${!t.available || state.busy[`start:${t.id}`] ? raw('disabled') : ''}
@@ -203,21 +253,40 @@ function sessionView(s, detail) {
           ${s.build?.sha ? html` · build <span class="mono">${sha7(s.build)}</span> ${s.build.title ?? ''}` : ''}</div>
       </div>
       ${live ? html`<button class="btn primary" data-action="finish" data-id="${s.id}">Finish session</button>` : ''}
-      <button class="btn" data-action="handoff" data-id="${s.id}" ${notes.length ? '' : raw('disabled')} title="Copies: Read …/HANDOFF.md and follow it.">Copy hand-off</button>
-      <button class="btn" data-action="open" data-path="${s.dir}/feedback.md">Open feedback.md</button>
-      <button class="btn" data-action="open" data-path="${s.dir}">Open folder</button>
+      <button class="btn" data-action="handoff" data-id="${s.id}" ${notes.length || detail?.speech?.length ? '' : raw('disabled')} title="Copies: Read …/HANDOFF.md and follow it.">Copy hand-off</button>
       ${live ? '' : html`<button class="btn danger" data-action="delete-session" data-id="${s.id}">Delete</button>`}
     </div>
     <div class="path muted small mono" title="${s.dir}">${s.dir}</div>
+    <div class="row files">
+      <span class="muted small">Open</span>
+      <button class="btn small-btn" data-action="open" data-path="${s.dir}/feedback.md">feedback.md</button>
+      <button class="btn small-btn" data-action="open" data-path="${s.dir}/timeline.md">timeline.md</button>
+      ${detail?.speech?.length ? html`<button class="btn small-btn" data-action="open" data-path="${s.dir}/transcript.md">transcript.md</button>` : ''}
+      ${(s.trace ?? []).map((f, i, all) => html`<button class="btn small-btn" data-action="trace" data-id="${s.id}" data-file="${f}" title="Playwright Trace Viewer: screenshots, network and console, with the timeline as markers">${all.length > 1 ? `trace ${i + 1}` : 'trace'}</button>`)}
+      <button class="btn small-btn" data-action="open" data-path="${s.dir}">folder</button>
+    </div>
     ${s.error ? html`<div class="card"><h3>The session hit an error</h3><pre class="log">${s.error}</pre></div>` : ''}
     ${live ? html`<div class="card"><h3>Live</h3>
       <p class="muted small">In the app: F8 pick an element · F9 drag a region · F7 general note · ⇄ moves the toolbar · Finish twice ends the session.</p>
+      ${mics.has(s.id) ? html`<p class="small"><span class="dot inline"></span> Microphone on (${mics.get(s.id).voice === 'open-mic' ? 'open mic: everything you say is transcribed; 🎙 on the toolbar mutes' : 'push-to-talk: hold F6 in the app, or hold 🎙 on its toolbar'}).</p>` : ''}
       <pre class="log">${(log ?? []).join('\n')}</pre></div>` : ''}
     <h3>${notes.length} note${notes.length === 1 ? '' : 's'}</h3>
     ${notes.length ? html`<div class="notes">${notes.map(n => noteCard(s.id, n))}</div>` : html`<div class="empty">${live ? 'Notes appear here as you save them.' : 'No notes in this session.'}</div>`}
+    ${timelineCard(detail?.timeline ?? [], live)}
     ${errors.length ? html`<div class="card" style="margin-top:16px"><details><summary><b>${errors.length} error${errors.length === 1 ? '' : 's'} logged</b> <span class="muted small">(console errors, failed requests, HTTP ≥ 400)</span></summary>
       <table>${errors.slice(0, 200).map(e => html`<tr><td class="small muted">${new Date(e.at).toLocaleTimeString()}</td><td class="mono small">${e.type}</td><td class="small">${e.text ?? e.status ?? ''} ${e.url ? html`<span class="muted mono">${e.url}</span>` : ''}</td></tr>`)}</table>
       </details></div>` : ''}`;
+}
+
+const TIMELINE_ICON = { action: '›', navigate: '↪', error: '⚠', note: '📝', speech: '🎙', end: '■' };
+
+function timelineCard(rows, live) {
+  if (!rows.length) return '';
+  return html`<div class="card" style="margin-top:16px">
+    <h3>Timeline <span class="muted small">(${rows.length} entries${live ? ', updates as you go' : ''})</span></h3>
+    <div class="timeline" id="timeline">${rows.map(r => html`
+      <div class="tl ${r.kind}${r.setup ? ' setup' : ''}"><span class="mono muted">${r.clock}</span><span class="icon">${TIMELINE_ICON[r.kind] ?? '·'}</span><span>${r.text}${r.setup ? html` <span class="muted small">(setup)</span>` : ''}</span></div>`)}
+    </div></div>`;
 }
 
 function noteCard(sessionId, n) {
@@ -227,7 +296,7 @@ function noteCard(sessionId, n) {
     <img src="${fileUrl(sessionId, img)}" alt="screenshot for note ${n.id}" data-action="zoom" data-src="${fileUrl(sessionId, n.screenshots.full)}">
     <div class="body">
       <div class="row" style="justify-content:space-between"><b>${n.id}. ${KIND[n.kind] ?? n.kind}</b><span class="muted small">${new Date(n.at).toLocaleTimeString()}</span></div>
-      <div class="text">${n.text || '(no text)'}</div>
+      <div class="text">${n.transcribing ? html`${spinner} transcribing…` : n.text || '(no text)'}</div>
       <div class="muted small mono">${shortUrl(n.url)}</div>
       ${t ? html`<div class="muted small">on <code>${t.tag}</code>${t.text ? html` “${t.text.slice(0, 60)}”` : ''}${t.attrs?.['aria-label'] ? html` [${t.attrs['aria-label']}]` : ''}</div>` : ''}
     </div>
@@ -336,7 +405,7 @@ function render() {
   const scroll = main.scrollTop;
   main.innerHTML = content.s;
   main.scrollTop = scroll;
-  if (v.kind === 'session') for (const pre of main.querySelectorAll('pre.log')) pre.scrollTop = pre.scrollHeight;
+  if (v.kind === 'session') for (const box of main.querySelectorAll('pre.log, #timeline')) box.scrollTop = box.scrollHeight;
 }
 
 function updateEditorStatus(v) {
@@ -391,9 +460,13 @@ const actions = {
     await checkLatest(d.id);
   })(),
   // Runs the chosen (default: newest) downloaded build; never downloads without asking first.
-  start: d => busy(`start:${d.id}`, async () => {
+  start: d => {
+    // read the choices before busy() re-renders the page
+    const voice = document.getElementById('voice-choice')?.value ?? voiceFor(d.id);
+    const chosenRun = document.getElementById('build-choice')?.value || undefined;
+    return busy(`start:${d.id}`, async () => {
     const t = state.targets.find(x => x.id === d.id);
-    let runId = document.getElementById('build-choice')?.value || undefined;
+    let runId = chosenRun;
     if (!runId && t?.build?.type === 'github-actions') {
       runId = (await api('builds:forTarget', d.id))[0]?.runId;
       if (!runId) {
@@ -403,12 +476,36 @@ const actions = {
         if (!confirm(`No build of ${t.name} is downloaded yet.\n\nDownload ${what} and start?`)) return;
       }
     }
-    const id = await api('sessions:start', d.id, { runId });
+    rememberVoice(d.id, voice);
+    // ask for the microphone before launching anything, so a refusal doesn't leave a session half started
+    let stream;
+    if (voice !== 'off') {
+      try {
+        stream = await openMic();
+      } catch (e) {
+        toast(`No microphone: ${e.message}. Check Windows Settings > Privacy > Microphone, or start without voice.`, true);
+        return;
+      }
+    }
+    let id;
+    try {
+      id = await api('sessions:start', d.id, { runId, voice });
+    } catch (e) {
+      stream?.getTracks().forEach(track => track.stop());
+      throw e;
+    }
+    if (stream) await startMic(id, stream, voice);
     await refresh();
     await go({ kind: 'session', id });
-  })(),
+    })();
+  },
   finish: d => api('sessions:finish', d.id),
   handoff: async d => toast(`Copied:\n${await api('sessions:copyHandoff', d.id)}\n\nPaste it to a coding agent in the project's repo.`),
+  trace: async d => {
+    toast('Opening the trace in your browser…');
+    const url = await api('trace:open', d.id, d.file);
+    toast(`Trace Viewer: ${url}`);
+  },
   open: async d => {
     toast(`Opening ${d.path.split(/[\\/]/).pop()}…`);
     await api('shell:open', d.path);
@@ -524,6 +621,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'build-choice') state.view.runId = e.target.value || undefined;
+  if (e.target.id === 'voice-choice' && state.view.kind === 'target') rememberVoice(state.view.id, e.target.value);
 });
 document.addEventListener('keydown', e => {
   if (e.target.id === 'target-json' && e.key === 'Tab') {
@@ -546,10 +644,19 @@ window.qa.on('session', async ({ id, targetId, type, data }) => {
     addLog(targetId, data);
     return;
   }
+  if (type === 'action' || type === 'speech') {
+    // the recorder saves actions about a second after they happen; refresh the timeline after that, at most every 1.5 s
+    const v = state.view;
+    if (v.kind === 'session' && v.id === id && !v.timelineTimer) {
+      v.timelineTimer = setTimeout(() => { v.timelineTimer = null; void loadSession(id); }, 1500);
+    }
+    return;
+  }
   state.sessions = await api('sessions:list');
   const v = state.view;
   if (v.kind === 'session' && v.id === id) await loadSession(id);
   else render();
+  if (type === 'status' && (data === 'ended' || data === 'failed')) mics.get(id)?.stop();
   if (type === 'status' && (data === 'ended' || data === 'failed')) toast(data === 'failed' ? 'The session failed to start. See its page for the error.' : 'Session saved.', data === 'failed');
 });
 

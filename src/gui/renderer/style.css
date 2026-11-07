@@ -69,3 +69,12 @@ details summary { cursor: pointer; }
 .path { margin: -8px 0 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -1px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.files { margin: -8px 0 16px; gap: 6px; }
+button.btn.small-btn { padding: 3px 9px; font-size: 12px; }
+.timeline { max-height: 320px; overflow: auto; font-size: 13px; }
+.tl { display: grid; grid-template-columns: 44px 18px 1fr; gap: 6px; padding: 2px 0; }
+.tl.setup { opacity: .6; }
+.tl.error { color: var(--danger); }
+.tl.note { font-weight: 600; }
+.tl .icon { text-align: center; color: var(--muted); }
+.dot.inline { display: inline-block; vertical-align: middle; margin-right: 4px; background: var(--danger); }

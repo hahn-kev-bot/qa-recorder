@@ -1,6 +1,7 @@
 // End-to-end: a website target (fixture site in Chrome/Edge) with setup steps, a note on an open popup, an element
 // note, error capture with an ignore rule, a page change, and Finish from the toolbar.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,6 +46,14 @@ await page.keyboard.press('Control+Enter');
 await countIs(1);
 assert.ok(await menu.isVisible(), 'menu still open after saving the note');
 
+// the tester types a search and runs it: these become the steps before the next note
+await page.keyboard.press('Escape');
+await page.getByPlaceholder('Find a product').click();
+await page.keyboard.press('Control+A');
+await page.keyboard.type('kettle');
+await page.getByRole('button', { name: 'Search', exact: true }).click(); // blurs the field, so it reports the change
+await page.getByText('Searched for kettle').waitFor();
+
 // an element note via F8
 const search = await page.getByPlaceholder('Find a product').boundingBox();
 await page.keyboard.press('F8');
@@ -81,5 +90,33 @@ assert.match(handoff, /The site is test\/fixtures\/site\./);
 const saved = JSON.parse(await fs.readFile(path.join(session.dir, 'session.json'), 'utf8'));
 assert.equal(saved.status, 'ended');
 assert.equal(saved.notes, 2);
+
+// the timeline: the tester's actions in words, setup steps marked, toolbar clicks left out
+const actions = events.filter(e => e.type === 'action');
+assert.ok(actions.some(a => a.setup && a.action === 'click' && a.target.name === 'Search'), 'setup click recorded as setup');
+assert.ok(!actions.some(a => a.target?.name?.includes('Region')), 'toolbar clicks are not app actions');
+const note1Steps = md.split('## 001.')[1].split('## 002.')[0];
+assert.match(note1Steps, /Steps before this note:\s+1\. went to http:\/\/127\.0\.0\.1:\d+\/\s+2\. click button “Open menu”/);
+const note2Steps = md.split('## 002.')[1];
+assert.match(note2Steps, /set textbox “Search” to “kettle”/);
+assert.match(note2Steps, /click button “Search”/);
+assert.doesNotMatch(note2Steps, /teapot/, 'setup steps are not steps before a note');
+const timeline = await fs.readFile(path.join(session.dir, 'timeline.md'), 'utf8');
+assert.match(timeline, /`00:\d\d` set textbox “Search” to “teapot” _\(setup step\)_|`00:\d\d` click button “Search” _\(setup step\)_/);
+assert.match(timeline, /\*\*note 001\*\*/);
+assert.match(timeline, /went to `http:\/\/127\.0\.0\.1:\d+\/page2\.html`/);
+assert.match(timeline, /⚠ http 404/);
+assert.match(handoff, /timeline\.md/);
+
+// the trace: saved at Finish, with the timeline as markers
+assert.deepEqual(saved.trace, ['trace/001.zip']);
+const traceZip = await fs.readFile(path.join(session.dir, 'trace', '001.zip'));
+assert.ok(traceZip.length > 5000, 'trace has content');
+const traceEvents = process.platform === 'win32'
+  ? execFileSync(path.join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-xOf', path.join(session.dir, 'trace', '001.zip'), 'trace.trace'], { encoding: 'utf8' })
+  : execFileSync('unzip', ['-p', path.join(session.dir, 'trace', '001.zip'), 'trace.trace'], { encoding: 'utf8' });
+assert.match(traceEvents, /"title":"set textbox “Search” to “kettle”"/, 'timeline markers are in the trace');
+assert.match(traceEvents, /"title":"note 001 \(bug\): Menu items need icons"/);
+assert.match(traceEvents, /screencast-frame/, 'the trace has screenshots');
 console.log(`\nPASS. Session folder: ${session.dir}`);
 process.exit(0);

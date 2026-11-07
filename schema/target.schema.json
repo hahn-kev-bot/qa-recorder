@@ -70,6 +70,16 @@
               }
             }
           }
+        },
+        "typedText": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record what the tester types into fields in the timeline (passwords never). false records only the length."
+        },
+        "trace": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save a Playwright trace (screenshots as the screen changes, network, console) in trace/."
         }
       }
     },

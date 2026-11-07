@@ -15,12 +15,14 @@
     "smoke:url": "node test/smoke-url.mjs",
     "smoke:gui": "node test/smoke-gui.mjs",
     "smoke:fwlite": "node test/smoke-fwlite.mjs",
-    "smoke:dogfood": "node test/smoke-dogfood.mjs"
+    "smoke:dogfood": "node test/smoke-dogfood.mjs",
+    "smoke:voice": "node test/smoke-voice.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
     "ajv": "^8.20.0",
     "electron": "^45.2.3",
     "playwright-core": "^1.56.0"

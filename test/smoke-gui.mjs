@@ -28,7 +28,7 @@ await fs.writeFile(path.join(fakeBuild, 'qa-recorder-build.json'), JSON.stringif
 const electronApp = await _electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: [path.resolve(fileURLToPath(new URL('..', import.meta.url)))], // no trailing slash: it would escape the closing quote
-  env: { ...withoutRunAsNode(), QA_RECORDER_HOME: home },
+  env: { ...withoutRunAsNode(), QA_RECORDER_HOME: home, QA_RECORDER_NO_BROWSER: '1' },
 });
 const win = await electronApp.firstWindow();
 win.on('console', m => { if (m.type() === 'error') console.log('[window]', m.text()); });
@@ -111,9 +111,19 @@ assert.match(copied, /^Read .+HANDOFF\.md and follow it\.$/);
 const handoff = await fs.readFile(copied.slice(5, -' and follow it.'.length), 'utf8');
 assert.match(handoff, /Fixture over CDP/);
 
+// the live timeline picks up what the tester does
+await page.getByRole('button', { name: 'Open menu' }).click();
+await main.locator('#timeline').getByText('click button “Open menu”').waitFor({ timeout: 10_000 });
+
 await main.getByRole('button', { name: 'Finish session' }).click();
 await main.locator('.badge.ended').waitFor({ timeout: 30_000 });
 await browser.close().catch(() => {});
+
+// the trace opens in Playwright's Trace Viewer (served only, no browser tab, in tests)
+await main.getByRole('button', { name: 'trace', exact: true }).click();
+const viewer = await win.locator('#toast').getByText(/^Trace Viewer: http/).textContent({ timeout: 30_000 });
+const viewerUrl = viewer.replace('Trace Viewer: ', '');
+assert.equal((await fetch(viewerUrl)).status, 200, 'the trace viewer serves');
 
 // --- the sessions list and cleanup
 await nav('All sessions').click();
