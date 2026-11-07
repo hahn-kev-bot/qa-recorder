@@ -341,7 +341,7 @@ function sessionView(s, detail) {
       ${detail?.speech?.length && !live ? html`<span class="grow"></span>
         <span class="muted small">${s.transcribedWith ? `Transcribed again with ${s.transcribedWith.split('/').pop()}` : ''}</span>
         <button class="btn small-btn" data-action="retranscribe" data-id="${s.id}" ${state.busy[`retranscribe:${s.id}`] ? raw('disabled') : ''}
-          title="Run all of this session's speech through the larger Whisper model (slower, more accurate)">${state.busy[`retranscribe:${s.id}`] ? html`${spinner} ${state.retranscribeStatus ?? 'Re-transcribing…'}` : 'Re-transcribe with the better model'}</button>` : ''}
+          title="Run the whole recording through Whisper large-v3-turbo (slower, much more accurate)">${state.busy[`retranscribe:${s.id}`] ? html`${spinner} ${state.retranscribeStatus ?? 'Re-transcribing…'}` : 'Re-transcribe with the better model'}</button>` : ''}
     </div>
     ${s.error ? html`<div class="card"><h3>The session hit an error</h3><pre class="log">${s.error}</pre></div>` : ''}
     ${live ? html`<div class="card"><h3>Live</h3>
@@ -621,7 +621,7 @@ function micView(v) {
       <h3>${r.ok ? '✓ Sounds usable' : '⚠ Problems found'}</h3>
       ${r.problems.length ? html`<ul class="errors">${r.problems.map(p => html`<li>${p}</li>`)}</ul>` : ''}
       <p><b>Transcribed:</b> ${r.text ? `“${r.text}”` : html`<span class="muted">(nothing)</span>`}</p>
-      <p class="muted small">Level ${r.speechLevel.toFixed(3)} · peak ${r.peak.toFixed(2)} · ${(r.highShare * 100).toFixed(1)}% of the speech above 1.5 kHz (clear speech is usually over 5%)</p>
+      <p class="muted small">Your voice is <b>${Math.round(r.snrDb)} dB</b> above the background (clear transcripts need about 15 dB or more) · level ${r.speechLevel.toFixed(3)} · peak ${r.peak.toFixed(2)} · ${(r.highShare * 100).toFixed(1)}% of the speech above 1.5 kHz (clear speech is usually over 5%)</p>
       <audio controls src="${r.url}"></audio>
     </div>` : ''}`;
 }
@@ -758,8 +758,10 @@ const actions = {
       if (state.view === v) render();
     }
   },
-  retranscribe: d => {
-    if (!confirm('Transcribe this session\'s speech again with Whisper small.en?\n\nThe first time, the model downloads (249 MB). It takes about three times as long as the audio is.')) return;
+  retranscribe: async d => {
+    // only ask when there's a download to agree to
+    const { better } = await api('speech:models');
+    if (!better.downloaded && !confirm(`Transcribing again uses ${better.label ?? better.id}, which downloads first (${better.size ?? 'once'}).\n\nDownload it and start?`)) return;
     return busy(`retranscribe:${d.id}`, async () => {
       state.retranscribeStatus = 'Starting…';
       try {

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createChunker, normalize } from './chunker.mjs';
+import { createChunker, isLikelyHallucination, normalize } from './chunker.mjs';
 import { createTranscriber, createWavWriter, SAMPLE_RATE, toWav } from './transcriber.mjs';
 import { createSegmenter } from './voice.mjs';
 
@@ -121,13 +121,21 @@ export function createSessionVoice({ mode, dir, notes, speech, flush, screenshot
     async function transcribeWindow(start, samples) {
       let segments;
       try {
-        segments = await transcribe(samples);
+        segments = (await transcribe(samples)).filter(s => !isLikelyHallucination(s.text, samples, s.start, s.end));
       } catch (e) {
         segments = [{ start: 0, end: samples.length / SAMPLE_RATE, text: `(not transcribed: ${e.message.split('\n')[0]})` }];
       }
       const offset = start / SAMPLE_RATE;
-      for (const s of segments) {
-        const at = timeOf(start) + s.start * 1000;
+      // a window starts in the pause before the words; Whisper tends to date them from the window's start, so the
+      // first segment starts where speech was heard starting, if that was later
+      const windowEnd = timeOf(start + samples.length);
+      const firstOnset = shots.find(x => x.kind === 'speech' && x.at >= timeOf(start) && x.at < windowEnd)?.at;
+      for (const [i, s] of segments.entries()) {
+        let at = timeOf(start) + s.start * 1000;
+        if (i === 0 && firstOnset && firstOnset > at && firstOnset < timeOf(start) + s.end * 1000) {
+          at = firstOnset;
+          s.start = (firstOnset - timeOf(start)) / 1000;
+        }
         speech.push({
           id: ++entryId, mode, text: s.text,
           at: new Date(at).toISOString(), end: new Date(timeOf(start) + s.end * 1000).toISOString(),

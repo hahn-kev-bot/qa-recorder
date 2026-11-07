@@ -108,8 +108,10 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
         say(`Voice: ${voice === 'push-to-talk' ? `push-to-talk (hold ${TALK_KEY} in the app, or hold 🎙 on its toolbar)` : 'open mic (🎙 on the toolbar mutes)'}.`);
         controller.voice = createSessionVoice({
           mode: voice, dir, notes, speech, flush,
-          // the toolbar stays out of the screenshot
-          screenshot: file => app.page.screenshot({ path: file, style: '#qa-recorder-root { display: none !important; }' }),
+          // These happen while the tester talks or browses, so they must not touch the page: hiding the toolbar (or
+          // Playwright's default of hiding the text cursor) makes the page flash every time. The toolbar shows in a
+          // corner of these screenshots instead; notes the tester captures still leave it out.
+          screenshot: file => app.page.screenshot({ path: file, caret: 'initial' }),
           currentUrl: () => app.page.url(),
           onNote: n => emitter.emit('note', n),
           onSpeech: s => emitter.emit('speech', s),

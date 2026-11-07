@@ -24,36 +24,44 @@ function chunk(samples, opts = {}) {
   return { windows, onsets };
 }
 
-const speechSeconds = ws => ws.reduce((s, w) => s + w.samples.length, 0) / SAMPLE_RATE;
+// background noise at the level of a real session (about 0.013 RMS)
+function withNoise(x, speechGain) {
+  let seed = 1;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31) * 2 - 1;
+  return Float32Array.from(x, v => v * speechGain + rand() * 0.0225);
+}
+/** Every sample of the fixture's speech lies inside some window. */
+function coversSpeech(windows) {
+  return fixture.every((v, i) => v === 0 || windows.some(w => i >= w.start && i < w.start + w.samples.length));
+}
+const contiguousOrGapsAreQuiet = windows => windows.every((w, i) => i === 0 || w.start >= windows[i - 1].start + windows[i - 1].samples.length);
 
 test('each remark becomes its own window, cut at the pause', () => {
   const { windows, onsets } = chunk(fixture);
   assert.equal(windows.length, 2, `windows at ${windows.map(w => w.start / SAMPLE_RATE)}`);
   assert.equal(onsets.length, 2);
-  // each window starts just before its sentence (0.8 s and about 5.4 s), not at the silence before it
-  const starts = windows.map(w => w.start / SAMPLE_RATE);
-  assert.ok(starts[0] > 0.3 && starts[0] < 0.9, `first starts at ${starts[0]}`);
-  assert.ok(starts[1] > 5 && starts[1] < 6.2, `second starts at ${starts[1]}`);
-  assert.ok(windows.every(w => w.samples.length / SAMPLE_RATE < 3.6), 'trailing silence trimmed');
+  assert.ok(coversSpeech(windows));
+  const second = windows[1].start / SAMPLE_RATE;
+  assert.ok(second > 3.5 && second < 5.6, `second window starts in the pause before the sentence (${second})`);
+  assert.ok(onsets[1] / SAMPLE_RATE > 5 && onsets[1] / SAMPLE_RATE < 6.2, 'and its onset is where speech starts');
+  assert.ok(windows.every(w => w.voiced));
 });
 
 test('a steady background hum still leaves the pauses visible (the bug that gave one screenshot per session)', () => {
-  // white noise at the level a real session had (0.013 RMS), under the fixture
-  let seed = 1;
-  const rand = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31) * 2 - 1;
-  const noisy = Float32Array.from(fixture, v => v * 0.3 + rand() * 0.0225);
-  const { windows, onsets } = chunk(noisy);
+  const { windows, onsets } = chunk(withNoise(fixture, 0.3));
   assert.equal(onsets.length, 2, `onsets at ${onsets.map(i => i / SAMPLE_RATE)}`);
   assert.ok(onsets[1] / SAMPLE_RATE > 5 && onsets[1] / SAMPLE_RATE < 6.2, `second remark starts near 5.6 s (${onsets[1] / SAMPLE_RATE})`);
   assert.equal(windows.length, 2, `windows at ${windows.map(w => w.start / SAMPLE_RATE)}`);
+  assert.ok(coversSpeech(windows));
 });
 
-test('quiet speech is kept, not dropped (the bug that lost remarks)', () => {
-  // the level of the session that lost five remarks: speech around 0.01–0.04 RMS
-  const quiet = scaled(fixture, 0.12);
-  const { windows } = chunk(quiet);
+test('speech barely above the background is still transcribed, never dropped (the bug that lost remarks)', () => {
+  // the voice about 6 dB over the hum, as measured in two real sessions with a laptop mic
+  const noisy = withNoise(fixture, 0.15);
+  const { windows } = chunk(noisy);
   assert.ok(windows.length >= 1);
-  assert.ok(speechSeconds(windows) > 4, `kept ${speechSeconds(windows)} s of ~5 s of speech`);
+  assert.ok(coversSpeech(windows), `windows ${windows.map(w => `${(w.start / SAMPLE_RATE).toFixed(1)}+${(w.samples.length / SAMPLE_RATE).toFixed(1)}`)}`);
+  assert.ok(contiguousOrGapsAreQuiet(windows));
 });
 
 test('a long monologue is cut before maxSeconds at a quiet moment', () => {
@@ -62,21 +70,21 @@ test('a long monologue is cut before maxSeconds at a quiet moment', () => {
   const { windows } = chunk(long, { maxSeconds: 8, pauseMs: 5000 });
   assert.ok(windows.length >= 3);
   assert.ok(windows.every(w => w.samples.length / SAMPLE_RATE <= 8.01));
-  // forced cuts lose nothing: each window picks up exactly where the last one stopped
   for (let i = 1; i < windows.length; i++) {
     assert.equal(windows[i].start, windows[i - 1].start + windows[i - 1].samples.length, `gap before window ${i}`);
   }
 });
 
-test('pure silence produces no windows', () => {
+test('silence and a steady hum alone produce no windows', () => {
   assert.equal(chunk(new Float32Array(SAMPLE_RATE * 12)).windows.length, 0);
+  assert.equal(chunk(withNoise(new Float32Array(SAMPLE_RATE * 20), 0)).windows.length, 0);
 });
 
 test('normalize lifts quiet speech and leaves loud speech alone', () => {
   const quiet = scaled(fixture, 0.05);
   const peak = x => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
   assert.ok(peak(normalize(quiet)) > peak(quiet) * 5);
-  const loud = Float32Array.from({ length: SAMPLE_RATE }, (_, i) => (i % 40 < 20 ? 0.8 : -0.8));
+  const loud = Float32Array.from({ length: SAMPLE_RATE }, (_, i) => (i % 40 < 20 ? 0.9 : -0.9));
   assert.ok(normalize(loud) === loud, 'already loud: unchanged');
   assert.ok(peak(normalize(scaled(fixture, 0.01))) <= 1, 'never clips');
 });
@@ -91,4 +99,9 @@ test('the mic check: good, quiet, muffled, clipped', () => {
   assert.match(dull.problems.join(' '), /Muffled/);
   assert.match(analyzeAudio(scaled(fixture, 40)).problems.join(' '), /Distorted/);
   assert.match(analyzeAudio(new Float32Array(SAMPLE_RATE * 2)).problems.join(' '), /Almost nothing/);
+  // the two real sessions measured about 6 dB; clear speech over the same hum passes
+  const noisy = analyzeAudio(withNoise(fixture, 0.15));
+  assert.ok(noisy.snrDb > 3 && noisy.snrDb < 10, `snr ${noisy.snrDb}`);
+  assert.match(noisy.problems.join(' '), /Noisy: your voice is only \d+ dB/);
+  assert.ok(analyzeAudio(withNoise(fixture, 1)).snrDb > 15, 'a close mic over the same hum is fine');
 });

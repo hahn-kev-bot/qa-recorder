@@ -81,12 +81,14 @@ muffle speech; Whisper copes with background noise better). Quiet speech is rais
 transcription; the saved audio stays as recorded. Voice needs the desktop app; the CLI has no microphone.
 
 **Microphone page** (in the sidebar): pick the microphone, watch its level, and record a 4-second test that is played
-back, transcribed, and checked for being too quiet, muffled or distorted. You don't need it before every session; use
-it once, or when a transcript looks wrong.
+back, transcribed, and checked for being too quiet, muffled, distorted or noisy. You don't need it before every
+session; use it once, or when a transcript looks wrong. The number that matters most is how far your voice stands out
+from the background: below about 15 dB (a laptop mic with a fan running measured 6–7 dB) transcripts fall apart, and a
+headset or a mic close to your mouth helps far more than any setting.
 
-**Re-transcribe** on a finished session runs all its speech through Whisper small.en (downloaded the first time, about
-250 MB; roughly three times slower than real time) for a more accurate transcript. The session page plays each remark's
-audio, so you can check a transcript against what was said.
+**Re-transcribe** on a finished session runs the whole recording through Whisper large-v3-turbo (downloaded the first
+time, about 760 MB; roughly 0.4× real time) in long pieces, which is much more accurate than the live transcript. The
+session page plays each remark's audio, so you can check a transcript against what was said.
 
 ## Targets
 

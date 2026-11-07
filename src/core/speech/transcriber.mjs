@@ -6,23 +6,44 @@ import { qaHome } from '../paths.mjs';
 
 export const SAMPLE_RATE = 16_000;
 
-/** Live transcription uses the fast model; re-transcribing a finished session can use the better one. */
+/**
+ * Live transcription uses the fast model; re-transcribing a finished session uses the better one. Compared on real
+ * sessions (a laptop mic, the voice ~6 dB over a fan): large-v3-turbo was clearly ahead of small.en, which wasn't
+ * much better than base.en, and full precision didn't help. files: what has to be in the cache for it to count as
+ * downloaded.
+ */
 export const MODELS = {
-  fast: { id: 'Xenova/whisper-base.en', label: 'Whisper base.en', size: '77 MB' },
-  better: { id: 'Xenova/whisper-small.en', label: 'Whisper small.en', size: '249 MB' },
+  fast: { id: 'Xenova/whisper-base.en', label: 'Whisper base.en', size: '77 MB', dtype: 'q8', files: ['onnx/encoder_model_quantized.onnx', 'onnx/decoder_model_merged_quantized.onnx'] },
+  better: {
+    id: 'onnx-community/whisper-large-v3-turbo', label: 'Whisper large-v3-turbo', size: '760 MB',
+    dtype: { encoder_model: 'q4', decoder_model_merged: 'q4' }, language: 'english',
+    files: ['onnx/encoder_model_q4.onnx', 'onnx/decoder_model_merged_q4.onnx'],
+  },
 };
+
+export const modelsDir = () => process.env.QA_RECORDER_MODELS ?? path.join(qaHome(), 'models');
+
+/** Whether a model's files are already in the cache (so using it won't download anything). */
+export async function isDownloaded(model) {
+  const results = await Promise.all(model.files.map(f => fs.access(path.join(modelsDir(), model.id, f)).then(() => true, () => false)));
+  return results.every(Boolean);
+}
+
+/** A model by id: one of MODELS, or (tests) any other 8-bit English model. */
+export const modelFor = id => Object.values(MODELS).find(m => m.id === id) ?? { id, dtype: 'q8', files: [] };
 
 /**
  * Local speech-to-text with Whisper in a child process. The model downloads once into <data>/models.
- * Returns { ready, transcribe(Float32Array) → [{ start, end, text }] (seconds), close() }. Requests run one at a
- * time, in order.
+ * Returns { ready, transcribe(Float32Array, { long }) → [{ start, end, text }] (seconds), close() }. long: a
+ * recording longer than 30 s, decoded in overlapping pieces. Requests run one at a time, in order.
  */
-export function createTranscriber({ log = () => {}, model = MODELS.fast.id } = {}) {
+export function createTranscriber({ log = () => {}, model = MODELS.fast } = {}) {
   // QA_RECORDER_MODELS shares one model download between data folders (tests, the dogfood target)
-  const env = { ...process.env, QA_RECORDER_MODELS: process.env.QA_RECORDER_MODELS ?? path.join(qaHome(), 'models'), QA_RECORDER_SPEECH_MODEL: model };
+  const env = { ...process.env, QA_RECORDER_MODELS: modelsDir(), QA_RECORDER_SPEECH: JSON.stringify(model) };
   // under Electron, fork() runs Electron's own Node only with this set
   if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1';
-  const child = fork(fileURLToPath(new URL('./worker.mjs', import.meta.url)), [], { env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  // 'advanced' passes Float32Array as is, instead of as a JSON array of numbers
+  const child = fork(fileURLToPath(new URL('./worker.mjs', import.meta.url)), [], { env, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced' });
   let stderr = '';
   child.stderr.on('data', d => { stderr = (stderr + d).slice(-4000); });
   const pending = new Map();
@@ -57,13 +78,13 @@ export function createTranscriber({ log = () => {}, model = MODELS.fast.id } = {
   let chain = Promise.resolve();
   return {
     ready,
-    transcribe(samples) {
+    transcribe(samples, { long = false } = {}) {
       const run = async () => {
         await ready;
         const id = ++nextId;
         return new Promise((resolve, reject) => {
           pending.set(id, { resolve, reject });
-          child.send({ id, audio: Array.from(samples) });
+          child.send({ id, audio: samples instanceof Float32Array ? samples : Float32Array.from(samples), long });
         });
       };
       const result = chain.then(run, run);

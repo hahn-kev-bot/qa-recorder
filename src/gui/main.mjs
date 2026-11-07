@@ -11,7 +11,7 @@ import { serveFile } from '../core/serve-file.mjs';
 import { analyzeAudio } from '../core/speech/analyze.mjs';
 import { normalize } from '../core/speech/chunker.mjs';
 import { retranscribeSession } from '../core/speech/retranscribe.mjs';
-import { createTranscriber, MODELS } from '../core/speech/transcriber.mjs';
+import { createTranscriber, isDownloaded, MODELS, modelFor } from '../core/speech/transcriber.mjs';
 import { cleanupSessions, deleteSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
 import {
   authoringPrompt, deleteTarget, getTarget, listTargets, saveTarget, slug, targetFromUrl, validateTarget,
@@ -118,13 +118,17 @@ const handlers = {
     if (live.has(id)) throw new Error('Finish the session first.');
     const { session } = await getSession(id);
     // tests pick the fast model so they don't download the big one
-    const model = process.env.QA_RECORDER_RETRANSCRIBE_MODEL || undefined;
+    const model = process.env.QA_RECORDER_RETRANSCRIBE_MODEL ? modelFor(process.env.QA_RECORDER_RETRANSCRIBE_MODEL) : undefined;
     const count = await retranscribeSession(session.dir, { model, log: m => send('session', { id, type: 'retranscribe', data: m }) });
     send('session', { id, type: 'updated' }); // the window reloads it
     return count;
   },
 
-  'speech:models': () => MODELS,
+  // which models are already downloaded, so the window only warns about a download when there is one
+  'speech:models': async () => {
+    const better = process.env.QA_RECORDER_RETRANSCRIBE_MODEL ? modelFor(process.env.QA_RECORDER_RETRANSCRIBE_MODEL) : MODELS.better;
+    return { better: { ...better, downloaded: await isDownloaded(better) } };
+  },
   // the microphone page's check: how usable the recording is, and what the fast model makes of it
   'mic:test': async samples => {
     if (!(samples instanceof Float32Array)) throw new Error('No audio.');

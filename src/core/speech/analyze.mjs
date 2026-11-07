@@ -33,9 +33,10 @@ function powerSpectrum(frame) {
 }
 
 /**
- * How usable a recording is for transcription: loudness, clipping, and how much of the speech energy is above
- * 1.5 kHz (consonants live there; a muffled mic or heavy noise suppression removes it).
- * Returns { seconds, peak, speechLevel, clipped, highShare, problems: [text], ok }.
+ * How usable a recording is for transcription: loudness, clipping, how much of the speech energy is above
+ * 1.5 kHz (consonants live there; a muffled mic or heavy noise suppression removes it), and how far the voice stands
+ * out from the background (snrDb; transcription falls apart below ~15 dB).
+ * Returns { seconds, peak, speechLevel, clipped, highShare, noiseLevel, snrDb, problems: [text], ok }.
  */
 export function analyzeAudio(samples) {
   const seconds = samples.length / SAMPLE_RATE;
@@ -66,6 +67,11 @@ export function analyzeAudio(samples) {
   }
   const highShare = all ? high / all : 0;
   const clipped = samples.length ? clippedCount / samples.length : 0;
+  // how far the voice stands out from the background: the loudest frames against the quietest
+  const byLevel = frames.map(f => f.level).sort((a, b) => a - b);
+  const noiseLevel = byLevel[Math.floor(byLevel.length * 0.15)] ?? 0;
+  const voiceLevel = byLevel[Math.floor(byLevel.length * 0.95)] ?? 0;
+  const snrDb = 20 * Math.log10(Math.max(voiceLevel, 1e-6) / Math.max(noiseLevel, 1e-5));
 
   const problems = [];
   if (speechLevel < 0.003) problems.push('Almost nothing was heard. Check that the right microphone is picked and not muted.');
@@ -74,5 +80,8 @@ export function analyzeAudio(samples) {
     problems.push('Muffled: almost no sound above 1.5 kHz, where consonants are. Usually a noise filter ("Voice Focus", AI noise suppression, voice clarity) or a microphone far away. Turn the enhancement off for this microphone in Windows Settings > Sound.');
   }
   if (clipped > 0.005) problems.push('Distorted: the signal is too loud and clips. Lower the input level.');
-  return { seconds, peak, speechLevel, clipped, highShare, problems, ok: problems.length === 0 };
+  if (speechLevel >= 0.003 && snrDb < 15) {
+    problems.push(`Noisy: your voice is only ${Math.round(snrDb)} dB louder than the background (fan, room, laptop). Transcripts will be poor below about 15 dB. A headset or a microphone close to your mouth helps most; raising the volume doesn't, it raises the noise too.`);
+  }
+  return { seconds, peak, speechLevel, clipped, highShare, noiseLevel, snrDb, problems, ok: problems.length === 0 };
 }

@@ -54,7 +54,20 @@ const SENTENCES = /search button does nothing|filter to remember/i;
 
 // --- open mic: utterances land in the timeline (with a screenshot) and in transcript.md
 const openDir = await start('open-mic');
+// automatic screenshots must not touch the page (hiding the toolbar for them made it flash whenever you spoke):
+// watch the toolbar on every frame while the first remark is captured
+await page.waitForFunction(() => !!document.getElementById('qa-recorder-root'));
+await page.evaluate(() => {
+  window.__toolbarHiddenFrames = 0;
+  const host = document.getElementById('qa-recorder-root');
+  const watch = () => {
+    if (getComputedStyle(host).display === 'none') window.__toolbarHiddenFrames++;
+    requestAnimationFrame(watch);
+  };
+  requestAnimationFrame(watch);
+});
 await main.locator('#timeline .tl.speech').filter({ hasText: SENTENCES }).first().waitFor({ timeout: 120_000 });
+assert.equal(await page.evaluate(() => window.__toolbarHiddenFrames), 0, 'the toolbar never disappeared for an automatic screenshot');
 await page.getByRole('button', { name: 'Open menu' }).click(); // an action between utterances
 await main.locator('#timeline .tl.speech').filter({ hasText: SENTENCES }).nth(1).waitFor({ timeout: 60_000 });
 // a page change: the next remark must show the new page, not the old one
@@ -108,8 +121,7 @@ assert.ok(kinds.length >= 2 && kinds.every(k => /\bspeech\b|\bnote\b/.test(k)), 
 assert.ok(await main.locator('#timeline .tl.speech img.thumb').count() >= 2, 'speech rows have screenshots');
 
 // re-transcribe the finished session (the fast model here; the app uses the better one)
-win.once('dialog', d => d.accept());
-await main.getByRole('button', { name: 'Re-transcribe with the better model' }).click();
+await main.getByRole('button', { name: 'Re-transcribe with the better model' }).click(); // already downloaded: no prompt
 await win.locator('#toast').getByText(/^Re-transcribed: \d+ segments?\./).waitFor({ timeout: 120_000 });
 await main.getByText(/Transcribed again with whisper-base\.en/).waitFor();
 assert.match(await fs.readFile(path.join(openDir, 'transcript.md'), 'utf8'), /search button does nothing/i);
