@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hahn-kev-bot/qa-recorder/schema/target.schema.json",
+  "title": "qa-recorder target",
+  "description": "What to QA and how to start it: where the build comes from, how to launch it, how to get it to the starting state, and what the coding agent should know. Strings may use ${...} variables, see the README.",
+  "type": "object",
+  "required": [
+    "name",
+    "launch"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shown in the GUI and in feedback.md."
+    },
+    "description": {
+      "type": "string"
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "win32",
+          "linux",
+          "darwin"
+        ]
+      },
+      "description": "Only offer this target on these platforms. Omit for any."
+    },
+    "build": {
+      "$ref": "#/$defs/build"
+    },
+    "launch": {
+      "$ref": "#/$defs/launch"
+    },
+    "setup": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/step"
+      },
+      "description": "Run after the recorder attaches, before the tester takes over. Use it to reach the starting state (open a test project, dismiss a banner)."
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ignore": {
+          "type": "array",
+          "description": "Events to leave out of the log. Every field given must match; * is a wildcard.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "console.error, console.warning, pageerror, requestfailed, http"
+              },
+              "text": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "description": "The request URL, or the source URL of a console message."
+              }
+            }
+          }
+        }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the coding agent is told in HANDOFF.md.",
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "description": "Where the agent should work, e.g. a repo checkout path or an owner/name."
+        },
+        "context": {
+          "type": "string",
+          "description": "What the tester was looking at, e.g. which test data the session started with."
+        },
+        "hints": {
+          "type": "string",
+          "description": "Where the code lives, how to check for newer changes, project rules. Markdown."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "build": {
+      "description": "Where the thing under test comes from. Omit for a website.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "repo",
+            "workflow",
+            "artifact"
+          ],
+          "properties": {
+            "type": {
+              "const": "github-actions"
+            },
+            "repo": {
+              "type": "string",
+              "pattern": "^[^/\\s]+/[^/\\s]+$",
+              "description": "owner/name"
+            },
+            "workflow": {
+              "type": "string",
+              "description": "Workflow file name, e.g. build.yaml"
+            },
+            "branch": {
+              "type": "string",
+              "default": "develop"
+            },
+            "artifact": {
+              "type": "string",
+              "description": "Artifact name from that workflow's runs."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ],
+          "properties": {
+            "type": {
+              "const": "local"
+            },
+            "path": {
+              "type": "string",
+              "description": "A folder with a build in it. ${buildDir} points here."
+            }
+          }
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type"
+      },
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "exe": {
+      "description": "Program to start. Relative paths are inside the build; a/**/b finds b anywhere under a. An object picks per platform.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "win32": {
+              "type": "string"
+            },
+            "linux": {
+              "type": "string"
+            },
+            "darwin": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "exe": {
+          "$ref": "#/$defs/exe"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "default": "${appData}"
+        },
+        "shell": {
+          "type": "boolean",
+          "description": "Run exe through the shell, e.g. for npx or npm on Windows."
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "properties": {
+        "browser": {
+          "enum": [
+            "chrome",
+            "msedge",
+            "chromium"
+          ],
+          "description": "Default: Chrome, then Edge, then Playwright's Chromium."
+        },
+        "profile": {
+          "enum": [
+            "fresh",
+            "persistent"
+          ],
+          "default": "fresh",
+          "description": "fresh: a new browser profile per session. persistent: one profile kept for this target, so logins survive between sessions."
+        }
+      }
+    },
+    "launch": {
+      "oneOf": [
+        {
+          "description": "A website, opened in a browser the recorder controls.",
+          "type": "object",
+          "required": [
+            "type",
+            "url"
+          ],
+          "unevaluatedProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/browser"
+            }
+          ],
+          "properties": {
+            "type": {
+              "const": "browser"
+            },
+            "url": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "description": "A local web server (from the build or a command), then a browser on its URL.",
+          "type": "object",
+          "required": [
+            "type",
+            "exe",
+            "url"
+          ],
+          "unevaluatedProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/process"
+            },
+            {
+              "$ref": "#/$defs/browser"
+            }
+          ],
+          "properties": {
+            "type": {
+              "const": "server"
+            },
+            "url": {
+              "type": "string",
+              "description": "Usually http://127.0.0.1:${port}/"
+            },
+            "readyUrl": {
+              "type": "string",
+              "description": "Polled until it answers. Default: url."
+            }
+          }
+        },
+        {
+          "description": "A Windows desktop app whose UI is a WebView2 (MAUI Blazor, WinUI, WPF). The recorder turns on its DevTools port through WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS and isolates its WebView2 profile.",
+          "type": "object",
+          "required": [
+            "type",
+            "exe"
+          ],
+          "unevaluatedProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/process"
+            }
+          ],
+          "properties": {
+            "type": {
+              "const": "webview2"
+            }
+          }
+        },
+        {
+          "description": "Anything that speaks the Chrome DevTools protocol: an Electron app started with --remote-debugging-port=${port}, or (without exe) something already running.",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/process"
+            }
+          ],
+          "properties": {
+            "type": {
+              "const": "cdp"
+            },
+            "cdpUrl": {
+              "type": "string",
+              "default": "http://127.0.0.1:${port}"
+            }
+          }
+        }
+      ],
+      "discriminator": {
+        "propertyName": "type"
+      },
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "locator": {
+      "description": "Finds one element. Strings written /like this/i are regular expressions.",
+      "type": "object",
+      "minProperties": 1,
+      "unevaluatedProperties": false,
+      "allOf": [
+        {
+          "$ref": "#/$defs/locatorProps"
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One action. Add ifVisible to run it only when that element shows up within a short wait.",
+      "minProperties": 1,
+      "properties": {
+        "goto": {
+          "type": "string",
+          "description": "Load a URL; relative URLs resolve against the current page."
+        },
+        "navigate": {
+          "type": "string",
+          "description": "Client-side route change (history.pushState + popstate) without reloading; for apps that can't be reloaded."
+        },
+        "click": {
+          "$ref": "#/$defs/locator"
+        },
+        "fill": {
+          "description": "Type into a field: a locator plus value.",
+          "type": "object",
+          "required": [
+            "value"
+          ],
+          "unevaluatedProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/locatorProps"
+            }
+          ],
+          "properties": {
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        "press": {
+          "type": "string",
+          "description": "A key, e.g. Enter or Control+K."
+        },
+        "waitFor": {
+          "$ref": "#/$defs/locator"
+        },
+        "waitForUrl": {
+          "type": "string",
+          "description": "Glob (** and *) or /regex/ matched against the full URL or its path."
+        },
+        "wait": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Milliseconds."
+        },
+        "script": {
+          "type": "string",
+          "description": "A .mjs file next to the config whose default export is async ({ page, context, vars, log }) => {}."
+        },
+        "ifVisible": {
+          "$ref": "#/$defs/locator"
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Milliseconds; default 30000."
+        },
+        "optional": {
+          "type": "boolean",
+          "description": "Carry on if the step fails."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "goto"
+          ]
+        },
+        {
+          "required": [
+            "navigate"
+          ]
+        },
+        {
+          "required": [
+            "click"
+          ]
+        },
+        {
+          "required": [
+            "fill"
+          ]
+        },
+        {
+          "required": [
+            "press"
+          ]
+        },
+        {
+          "required": [
+            "waitFor"
+          ]
+        },
+        {
+          "required": [
+            "waitForUrl"
+          ]
+        },
+        {
+          "required": [
+            "wait"
+          ]
+        },
+        {
+          "required": [
+            "script"
+          ]
+        }
+      ]
+    },
+    "locatorProps": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "exact": {
+          "type": "boolean",
+          "description": "With text/label/name: match the whole string."
+        },
+        "role": {
+          "type": "string",
+          "description": "ARIA role, e.g. button, link, textbox."
+        },
+        "name": {
+          "type": "string",
+          "description": "With role: the accessible name."
+        },
+        "label": {
+          "type": "string"
+        },
+        "placeholder": {
+          "type": "string"
+        },
+        "testId": {
+          "type": "string"
+        },
+        "selector": {
+          "type": "string",
+          "description": "CSS or Playwright selector."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "../schema/target.schema.json",
+  "name": "FW Lite (Windows)",
+  "description": "The latest develop build of FieldWorks Lite for Windows, with a fresh copy of the example project.",
+  "platforms": ["win32"],
+  "build": {
+    "type": "github-actions",
+    "repo": "sillsdev/languageforge-lexbox",
+    "workflow": "fw-lite.yaml",
+    "branch": "develop",
+    "artifact": "fw-lite-portable"
+  },
+  "launch": {
+    "type": "webview2",
+    "exe": "**/FwLiteMaui.exe",
+    "args": ["--start-url", "/"],
+    "cwd": "${appData}",
+    "env": {
+      "FwLiteMaui__BaseDataDir": "${appData}",
+      "FwDataBridge__ProjectsFolder": "${appData}/fieldworks-projects",
+      "Analytics__Enabled": "false",
+      "FwLite__UpdateCheckCondition": "Never"
+    }
+  },
+  "setup": [
+    { "navigate": "/" },
+    {
+      "ifVisible": { "text": "Create Example Project", "exact": true },
+      "click": { "text": "Create Example Project", "exact": true }
+    },
+    { "click": { "role": "link", "name": "/Example-Project/" }, "timeout": 120000 },
+    { "waitForUrl": "/project/**", "timeout": 60000 }
+  ],
+  "capture": {
+    "ignore": [{ "url": "*/favicon.ico" }]
+  },
+  "handoff": {
+    "workspace": "a checkout of sillsdev/languageforge-lexbox",
+    "context": "the built-in example project (Example-Project), fresh for this session",
+    "hints": "- The FW Lite UI is Svelte in `frontend/viewer/src`.\n- Check for newer changes with `git fetch origin && git log --oneline ${build.sha}..origin/develop -- <paths>`.\n- Sync and data code under `backend/FwLite` is 🔴 Critical (see its AGENTS.md): draft an issue rather than changing it from a QA note.\n- The issue tracker is public. Never include anything from real projects."
+  }
+}

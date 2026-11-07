@@ -1,20 +1,27 @@
 {
-  "name": "fwlite-qa",
-  "version": "0.1.0",
-  "description": "Download a CI build of FieldWorks Lite, QA it with an injected feedback toolbar, and hand the notes to a coding agent.",
+  "name": "qa-recorder",
+  "version": "0.2.0",
+  "description": "Record QA sessions of any app or website with a feedback toolbar, and hand the notes to a coding agent.",
   "type": "module",
+  "main": "src/gui/main.cjs",
   "bin": {
-    "fwlite-qa": "src/cli.mjs"
+    "qa-recorder": "src/cli.mjs"
   },
   "scripts": {
-    "start": "node src/cli.mjs start",
-    "check": "node --check src/cli.mjs && node --check src/builds.mjs && node --check src/launch.mjs && node --check src/harness.mjs && node --check src/bundle.mjs && node --check src/overlay.js",
-    "smoke": "node test/smoke.mjs"
+    "gui": "node src/cli.mjs gui",
+    "start": "node src/cli.mjs gui",
+    "test": "node --test test/unit/*.test.mjs",
+    "check": "node test/check.mjs",
+    "smoke:url": "node test/smoke-url.mjs",
+    "smoke:gui": "node test/smoke-gui.mjs",
+    "smoke:fwlite": "node test/smoke-fwlite.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
+    "electron": "^45.2.3",
     "playwright-core": "^1.56.0"
   }
 }

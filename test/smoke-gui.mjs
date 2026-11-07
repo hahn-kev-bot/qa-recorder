@@ -1,0 +1,118 @@
+// End-to-end through the desktop app: create a target from a URL, start and finish a session from the GUI, watch a
+// note arrive live (the test drives the page through a CDP target), copy the hand-off, clean up.
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { _electron, chromium } from 'playwright-core';
+import { freePort } from '../src/core/launch.mjs';
+import { serveFixture } from './fixtures/server.mjs';
+
+// editors built on Electron set ELECTRON_RUN_AS_NODE for their terminals; it would start Electron as plain Node
+function withoutRunAsNode() {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return env;
+}
+
+const home = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-recorder-smoke-gui-'));
+const site = await serveFixture();
+const electronApp = await _electron.launch({
+  executablePath: createRequire(import.meta.url)('electron'),
+  args: [path.resolve(fileURLToPath(new URL('..', import.meta.url)))], // no trailing slash: it would escape the closing quote
+  env: { ...withoutRunAsNode(), QA_RECORDER_HOME: home },
+});
+const win = await electronApp.firstWindow();
+win.on('console', m => { if (m.type() === 'error') console.log('[window]', m.text()); });
+const nav = name => win.locator('#sidebar').getByRole('button', { name });
+const main = win.locator('#main');
+
+// bundled targets are listed
+await nav(/FW Lite \(Windows\)/).waitFor();
+
+// --- a target from a URL, with live validation
+await nav('＋ New target').click();
+await win.locator('#new-url').fill(site.url);
+await win.getByRole('button', { name: 'Fill in' }).click();
+await main.getByText('Matches the schema.').waitFor();
+assert.equal(await win.locator('#target-id').inputValue(), '127-0-0-1');
+const json = win.locator('#target-json');
+assert.match(await json.inputValue(), /"type": "browser"/);
+await json.fill('{ "name": "Broken", "launch": { "type": "browser" } }');
+await main.getByText("/launch: must have required property 'url'").waitFor();
+await win.locator('#target-id').fill('fixture');
+await json.fill(JSON.stringify({ name: 'Fixture shop', launch: { type: 'browser', url: site.url } }, null, 2));
+await main.getByText('Matches the schema.').waitFor();
+await main.getByRole('button', { name: 'Save', exact: true }).click();
+await main.getByRole('heading', { name: 'Fixture shop' }).waitFor();
+await fs.access(path.join(home, 'targets', 'fixture.json'));
+
+// --- start a browser session from the GUI, finish it from the GUI
+await main.getByRole('button', { name: '▶ Start session' }).click();
+await main.getByRole('button', { name: 'Finish session' }).waitFor();
+await main.locator('.badge.running').waitFor({ timeout: 60_000 });
+await main.getByRole('button', { name: 'Finish session' }).click();
+await main.locator('.badge.ended').waitFor({ timeout: 30_000 });
+await main.getByText('No notes in this session.').waitFor();
+
+// --- a CDP target: the test owns the browser, so it can act as the tester while the GUI watches
+const port = await freePort();
+const browser = await chromium.launch({ channel: 'msedge', headless: false, args: [`--remote-debugging-port=${port}`] })
+  .catch(() => chromium.launch({ channel: 'chrome', headless: false, args: [`--remote-debugging-port=${port}`] }));
+const page = await browser.newPage();
+await page.goto('about:blank');
+await nav('＋ New target').click();
+await win.locator('#target-id').fill('fixture-cdp');
+await json.fill(JSON.stringify({
+  name: 'Fixture over CDP',
+  launch: { type: 'cdp', cdpUrl: `http://127.0.0.1:${port}` },
+  setup: [{ goto: site.url }, { waitFor: { text: 'Fixture shop' } }],
+  handoff: { workspace: 'the fixture repo' },
+}));
+await main.getByText('Matches the schema.').waitFor();
+await main.getByRole('button', { name: 'Save and start' }).click();
+await main.locator('.badge.running').waitFor({ timeout: 60_000 });
+
+await page.waitForFunction(() => !!document.getElementById('qa-recorder-root'));
+await page.keyboard.press('F9');
+await page.mouse.move(30, 30);
+await page.mouse.down();
+await page.mouse.move(400, 200, { steps: 4 });
+await page.mouse.up();
+await page.keyboard.type('Heading is too plain');
+await page.keyboard.press('Control+Enter');
+
+const card = main.locator('.note').first();
+await card.getByText('Heading is too plain').waitFor({ timeout: 15_000 });
+const img = card.locator('img');
+await win.waitForFunction(el => el.complete && el.naturalWidth > 0, await img.elementHandle());
+await main.getByRole('button', { name: 'Copy hand-off' }).click();
+const copied = await electronApp.evaluate(({ clipboard }) => clipboard.readText());
+assert.match(copied, /^Read .+HANDOFF\.md and follow it\.$/);
+const handoff = await fs.readFile(copied.slice(5, -' and follow it.'.length), 'utf8');
+assert.match(handoff, /Fixture over CDP/);
+
+await main.getByRole('button', { name: 'Finish session' }).click();
+await main.locator('.badge.ended').waitFor({ timeout: 30_000 });
+await browser.close().catch(() => {});
+
+// --- the sessions list and cleanup
+await nav('All sessions').click();
+await main.locator('tr.clickable').nth(1).waitFor();
+assert.equal(await main.locator('tr.clickable').count(), 2);
+await nav('Storage and cleanup').click();
+await win.locator('#older-than').fill('0');
+await win.locator('#only-empty').check();
+win.once('dialog', d => d.accept());
+await main.getByRole('button', { name: 'Delete', exact: true }).first().click();
+await win.locator('#toast').getByText('Deleted 1 session(s).').waitFor();
+const left = await fs.readdir(path.join(home, 'sessions'));
+assert.equal(left.length, 1, 'only the session with a note is left');
+assert.match(left[0], /fixture-cdp$/);
+
+await electronApp.close();
+site.close();
+console.log(`\nPASS. Home: ${home}`);
+process.exit(0);

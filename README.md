@@ -1,84 +1,126 @@
-# fwlite-qa
+# qa-recorder
 
-QA a CI build of [FieldWorks Lite](https://github.com/sillsdev/languageforge-lexbox) and hand your feedback to a coding agent.
+Record a QA session of any app or website, with a feedback toolbar injected into it, and hand the notes to a coding
+agent. Nothing is built into the thing under test: qa-recorder attaches over the Chrome DevTools protocol.
 
 ```mermaid
 flowchart LR
-  A[fwlite-qa start] -->|gh run download| B[latest develop build]
-  B --> C[FW Lite, isolated data folder]
-  C -->|DevTools protocol| D[feedback toolbar + error log]
-  D --> E[session folder: feedback.md, screenshots, HANDOFF.md]
-  E --> F[coding agent]
+  T[target config<br/>JSON] --> B[build<br/>CI artifact, folder, or none]
+  B --> L[launch<br/>browser · server · WebView2 app · CDP]
+  L --> S[setup steps<br/>reach the starting state]
+  S --> R[tester + toolbar<br/>notes, screenshots, errors]
+  R --> F[session folder<br/>feedback.md · HANDOFF.md]
+  F --> A[coding agent]
 ```
-
-Nothing is built into FW Lite. On Windows the app's UI is a WebView2, which opens a DevTools port when launched with
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>`. The tool attaches to that port with Playwright,
-injects a toolbar, and takes screenshots. Elsewhere it runs FwLiteWeb in a Chrome/Edge window it controls.
 
 ## Requirements
 
 - Node 22+
-- [GitHub CLI](https://cli.github.com), logged in (`gh auth login`) with read access to the FW Lite repo's Actions artifacts
-- Windows: the WebView2 runtime (already present on Windows 10/11)
-- Linux/macOS: Chrome or Edge. CI only publishes FwLiteWeb for Linux; on macOS pass `--exe` to a local FwLiteWeb build.
+- Chrome or Edge for website and server targets
+- [GitHub CLI](https://cli.github.com), logged in, for targets whose build is a GitHub Actions artifact
+- Windows for WebView2 targets such as FW Lite
 
 ## Use
 
 ```sh
 npm install
-node src/cli.mjs            # latest successful develop build
-node src/cli.mjs --run 42168601788
-node src/cli.mjs --exe path/to/FwLiteMaui.exe   # a local build
+npm start                       # the desktop app
 ```
 
-The tool opens the built-in example project (`--no-example` to skip that), then:
+In the app you pick a target, check for and download new CI builds, start a session, watch notes arrive, open the
+session's feedback, copy the hand-off line for your agent, and clean up old sessions and builds.
+
+The same things work from the command line:
+
+```sh
+node src/cli.mjs start fwlite-maui            # the latest develop build of FW Lite
+node src/cli.mjs start --url https://example.org
+node src/cli.mjs start my-app --exe path/to/local/build.exe
+node src/cli.mjs targets | sessions | builds
+node src/cli.mjs cleanup --older-than 30 [--empty]
+node src/cli.mjs validate my-target.json
+node src/cli.mjs prompt                       # the prompt for an AI to write a target
+```
+
+## While testing
 
 | Key | Action |
 |---|---|
 | F8 | pick an element, then write a note about it |
 | F9 | drag a region, then write a note about it |
 | F7 | a general note |
+| Esc | cancel a capture |
 
-Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and free text, and is written to disk as soon as you
-save it. Esc cancels a capture. ⇄ moves the toolbar to the other side.
+Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and free text, and is written to disk as soon as you save
+it. ⇄ moves the toolbar to the other side. **Finish** (twice) ends the session and closes the app; closing the app or
+the browser also ends it.
 
-The toolbar is invisible to the app: it swallows its own clicks, keys and focus changes before the app's listeners
+The toolbar is invisible to the page: it swallows its own clicks, keys and focus changes before the page's listeners
 run, so an open popup or menu stays open while you capture a note about it.
 
-To finish, click **Finish** twice (it closes the app), close the app, or press Ctrl+C in the terminal.
+## Targets
 
-## Session folder
+A target is a JSON file. Bundled ones are in `configs/`; yours are in `<data>/targets/` (an edited bundled target is
+saved there too, under the same id). The schema is `schema/target.schema.json`, so editors with JSON Schema support
+complete and check it.
 
-Under `%LOCALAPPDATA%\fwlite-qa\sessions\` (or `~/.cache/fwlite-qa/sessions/`; set `FWLITE_QA_HOME` to move it):
+The smallest target:
 
-| File | Contents |
+```json
+{ "name": "Docs site", "launch": { "type": "browser", "url": "https://docs.example.org" } }
+```
+
+[`configs/fwlite-maui.json`](configs/fwlite-maui.json) uses everything: a CI artifact build, a WebView2 app with
+environment variables that keep it away from real data, setup steps that open the example project, an ignore rule
+for noise in the error log, and hints for the agent.
+
+| Part | What it does |
 |---|---|
-| `feedback.md` | every note: text, cropped screenshot, the element it targets (text, labels, attributes, CSS path), errors from the minute before |
-| `notes/` | crops and full-window screenshots |
-| `HANDOFF.md` | the prompt for the agent: find the code, check whether develop already changed it, size each note, agree a plan with you before changing anything |
-| `events.json` | console errors, failed requests, navigation |
-| `.app-data/` | the app's data for this session (the example project, logs) |
+| `build` | `github-actions` (repo, workflow, branch, artifact; latest successful run, cached) or `local` (a folder) |
+| `launch` | `browser` (url), `server` (start exe, wait for readyUrl, open url), `webview2` (Windows WebView2 app), `cdp` (Electron app with `--remote-debugging-port=${port}`, or attach to `cdpUrl`) |
+| `setup` | steps after attaching: `goto`, `navigate`, `click`, `fill`, `press`, `waitFor`, `waitForUrl`, `wait`, `script`; with `ifVisible`, `optional`, `timeout` |
+| `capture.ignore` | leave matching events out of the error log (`type`, `text`, `url`; `*` wildcard) |
+| `handoff` | `workspace`, `context`, `hints` for HANDOFF.md |
 
-To hand it off, start a coding agent in your LexBox checkout and say `Read <session>/HANDOFF.md and follow it.`
+Strings can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${port}`, `${arch}`,
+`${platform}`, `${targetDir}`, `${build.sha}`, `${build.branch}`, `${build.runId}`, `${build.url}` and `${env:NAME}`.
 
-## Isolation
+To make a new target in the app: paste a URL, or **Copy AI prompt** ([AUTHORING.md](AUTHORING.md) plus the schema),
+give it to an AI, answer its questions, and paste the JSON it writes. The editor checks it as you type.
 
-Each session gets a fresh data folder: FW Lite projects, logs, auth cache, WebView2 profile, and an empty FieldWorks
-projects folder in place of the one in the registry, so your real FieldWorks projects are never listed. Analytics and
-update checks are off.
+## Data
 
-One gap: FW Lite saves the last page you visited in MAUI preferences under your user profile, shared with any other
-unpackaged FW Lite you run. Builds that include `--start-url` (sillsdev/languageforge-lexbox#2944) ignore it at
-launch; for older builds the tool navigates home after attaching. A session still overwrites that saved page.
+Under `%LOCALAPPDATA%\qa-recorder` (or `~/.cache/qa-recorder`; set `QA_RECORDER_HOME` to move it):
+
+| Folder | Contents |
+|---|---|
+| `sessions/<time>_<target>/` | `feedback.md`, `HANDOFF.md`, `notes/` screenshots, `events.json` (errors, navigation), `session.json`, `.app-data/` (the app's data for this session) |
+| `builds/` | downloaded CI artifacts |
+| `targets/` | your targets |
+| `profiles/` | browser profiles for targets with `"profile": "persistent"` |
+
+To hand a session off, start a coding agent in the project's repo and say `Read <session>/HANDOFF.md and follow it.`
+(the app's **Copy hand-off** button copies that line).
+
+## FW Lite notes
+
+Each FW Lite session gets a fresh data folder: projects, logs, auth cache, WebView2 profile, and an empty FieldWorks
+projects folder in place of the one in the registry. Analytics and update checks are off. FW Lite still saves the
+last page in MAUI preferences under your user profile; builds with `--start-url` (sillsdev/languageforge-lexbox#2944)
+ignore it at launch, and the setup's `navigate` step covers older builds.
 
 ## Test
 
 ```sh
-npm run check   # syntax
-npm run smoke   # Windows: launches the latest develop build, acts as a tester (including a note on an open popup), checks the session folder
+npm test               # unit tests: schema, variables, matching
+npm run check          # syntax of every source file
+npm run smoke:url      # website target end to end (opens Chrome/Edge)
+npm run smoke:gui      # the desktop app end to end (opens the app and browsers)
+npm run smoke:fwlite   # Windows: FW Lite's latest develop build end to end
 ```
 
 ## Not yet
 
-- Native windows and dialogs (file pickers, the title bar) are outside the WebView, so the toolbar can't see them.
+- Native windows and dialogs (file pickers, title bars) are outside the web view, so the toolbar can't see them.
+- A packaged build of the desktop app; for now run it from a clone.
 - Ideas: rrweb replay of the session, hold-to-talk voice notes transcribed locally.

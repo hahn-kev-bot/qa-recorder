@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Fixture shop</title>
+<style>
+  body { font-family: system-ui; margin: 40px; }
+  #menu { position: absolute; top: 120px; left: 300px; padding: 16px; border: 1px solid #888; background: #fff; display: none; }
+  #menu.open { display: block; }
+</style>
+</head>
+<body>
+  <h1>Fixture shop</h1>
+  <label>Search <input id="search" placeholder="Find a product"></label>
+  <button id="go">Search</button>
+  <button id="toggle" aria-label="Open menu">Menu</button>
+  <div id="menu" role="menu"><div role="menuitem">Menu item one</div><div role="menuitem">Menu item two</div></div>
+  <p id="result"></p>
+  <a href="/page2.html">Next page</a>
+  <script>
+    const menu = document.getElementById('menu');
+    document.getElementById('toggle').addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('open'); });
+    // like most popover libraries: close on pointerdown or focus outside
+    document.addEventListener('pointerdown', e => { if (!menu.contains(e.target) && e.target.id !== 'toggle') menu.classList.remove('open'); });
+    document.addEventListener('focusin', e => { if (!menu.contains(e.target) && e.target.id !== 'toggle') menu.classList.remove('open'); });
+    document.getElementById('go').addEventListener('click', () => {
+      document.getElementById('result').textContent = 'Searched for ' + document.getElementById('search').value;
+      console.error('fixture: search backend unavailable');
+    });
+  </script>
+</body>
+</html>

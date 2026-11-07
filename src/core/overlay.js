@@ -1,12 +1,12 @@
 // Injected into the app page by the harness. Plain browser script, no imports: it runs via addInitScript/evaluate.
-// Notes go to the harness through the window.__fwliteQaNote binding, which takes the screenshots.
+// Notes go to the harness through the window.__qaRecorderNote binding, which takes the screenshots.
 //
 // The page must not notice the toolbar: popovers and dialogs close on pointerdown or focus "outside" them, and a
 // click on the toolbar is outside. So a window capture listener, which runs before any of the app's listeners,
 // swallows every event that involves the toolbar and hands it to the toolbar's own handlers instead.
 (() => {
-  if (window.top !== window || window.__fwliteQa) return;
-  window.__fwliteQa = true;
+  if (window.top !== window || window.__qaRecorder) return;
+  window.__qaRecorder = true;
 
   const KINDS = [
     { id: 'bug', label: '🐛 Bug' },
@@ -51,7 +51,7 @@
   function mount() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', mount, { once: true });
     host = document.createElement('div');
-    host.id = 'fwlite-qa-root';
+    host.id = 'qa-recorder-root';
     host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
     document.documentElement.appendChild(host);
     const root = host.attachShadow({ mode: 'open' });
@@ -95,7 +95,7 @@
     const bar = root.querySelector('.bar');
     const countEl = root.querySelector('.count');
     const finishBtn = root.querySelector('.finish');
-    let side = localStorage.getItem('fwlite-qa-side') === 'right' ? 'right' : 'left';
+    let side = localStorage.getItem('qa-recorder-side') === 'right' ? 'right' : 'left';
     let busy = false;
     let finishArmed = null;
     // the current mode's handler for events from inside the overlay (pointer drags, element picking, the form)
@@ -127,7 +127,7 @@
 
     function setSide(next) {
       side = next;
-      localStorage.setItem('fwlite-qa-side', side);
+      localStorage.setItem('qa-recorder-side', side);
       bar.classList.toggle('left', side === 'left');
       bar.classList.toggle('right', side === 'right');
     }
@@ -145,7 +145,7 @@
       }
       clearTimeout(finishArmed);
       finishBtn.textContent = 'Saving…';
-      void window.__fwliteQaFinish?.();
+      void window.__qaRecorderFinish?.();
     }
 
     function done() {
@@ -259,7 +259,7 @@
         host.style.display = 'none'; // keep the toolbar out of the screenshot
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         try {
-          const saved = await window.__fwliteQaNote(note);
+          const saved = await window.__qaRecorderNote(note);
           countEl.textContent = String(saved.count);
           toast(`Saved note ${saved.id}`);
         } catch (err) {

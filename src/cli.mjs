@@ -1,78 +1,118 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEFAULT_REPO, fetchBuild, findRun } from './builds.mjs';
-import { launchMaui, launchWeb } from './launch.mjs';
-import { runSession } from './harness.mjs';
-import { sessionsDir } from './paths.mjs';
+import { listBuilds, resolveBuild } from './core/builds.mjs';
+import { qaHome, toolRoot } from './core/paths.mjs';
+import { startSession } from './core/recorder.mjs';
+import { cleanupSessions, listSessions } from './core/sessions.mjs';
+import { authoringPrompt, getTarget, listTargets, parseTarget, targetFromUrl } from './core/targets.mjs';
 
-const USAGE = `fwlite-qa: QA a CI build of FieldWorks Lite and collect feedback for a coding agent.
+const USAGE = `qa-recorder: record a QA session of an app or website and hand the feedback to a coding agent.
 
 Usage:
-  fwlite-qa [start] [options]   download (if needed), launch, and record a QA session
-  fwlite-qa fetch [options]     only download the build
+  qa-recorder gui                         open the desktop app
+  qa-recorder start <target> [options]    record a session (target: an id from \`targets\`, or a .json file)
+  qa-recorder start --url <url>           record a session of any website
+  qa-recorder targets                     list targets
+  qa-recorder fetch <target> [--run <id>] download a target's build without starting
+  qa-recorder builds                      list downloaded builds
+  qa-recorder sessions                    list sessions
+  qa-recorder cleanup --older-than <days> [--empty]   delete old sessions (--empty: only those without notes)
+  qa-recorder validate <file.json>        check a target config against the schema
+  qa-recorder prompt                      print the prompt for an AI to write a target config
 
-Options:
-  --target maui|web   maui = Windows MAUI app (default on Windows), web = FwLiteWeb in a browser (default elsewhere)
-  --branch <name>     branch to take the latest successful build from (default develop)
-  --run <id>          a specific CI run instead of the latest
-  --repo <owner/name> default ${DEFAULT_REPO}
-  --exe <path>        run a local build instead of downloading (FwLiteMaui.exe or FwLiteWeb)
-  --no-example        start with an empty data folder instead of opening the example project
-  -h, --help
+Options for start:
+  --run <id>      a specific CI run instead of the latest
+  --offline       don't check for a newer build; use the newest download
+  --exe <path>    run this program instead of the target's build (e.g. a local build)
+
+Data lives in ${qaHome()} (set QA_RECORDER_HOME to move it).
 `;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
-    target: { type: 'string', default: process.platform === 'win32' ? 'maui' : 'web' },
-    branch: { type: 'string', default: 'develop' },
+    url: { type: 'string' },
     run: { type: 'string' },
-    repo: { type: 'string', default: DEFAULT_REPO },
+    offline: { type: 'boolean', default: false },
     exe: { type: 'string' },
-    'no-example': { type: 'boolean', default: false },
+    'older-than': { type: 'string' },
+    empty: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
 });
 
-const command = positionals[0] ?? 'start';
-if (values.help || !['start', 'fetch'].includes(command)) {
-  console.log(USAGE);
-  process.exit(values.help ? 0 : 1);
-}
-if (!['maui', 'web'].includes(values.target)) throw new Error(`Unknown --target ${values.target}`);
-if (values.target === 'maui' && process.platform !== 'win32') throw new Error('The MAUI target is Windows only; use --target web.');
+const [command, arg] = positionals;
+const mb = n => `${(n / 1024 / 1024).toFixed(1)} MB`;
 
-const repo = values.repo;
-let run;
-let buildDir;
-if (values.exe) {
-  run = { databaseId: 'local', headSha: 'local-build', headBranch: 'local', displayTitle: values.exe, url: '' };
-} else {
-  run = await findRun({ repo, branch: values.branch, runId: values.run });
-  ({ dir: buildDir } = await fetchBuild(run, values.target, { repo }));
-}
-if (command === 'fetch') {
-  console.log(buildDir);
-  process.exit(0);
+switch (values.help ? 'help' : command) {
+  case 'gui': {
+    const electron = createRequire(import.meta.url)('electron');
+    // editors built on Electron set this for their terminals; it would start Electron as plain Node
+    const { ELECTRON_RUN_AS_NODE, ...env } = process.env;
+    void ELECTRON_RUN_AS_NODE;
+    // no trailing slash: on Windows "C:\dir\" escapes the closing quote
+    const child = spawn(electron, [path.resolve(toolRoot())], { stdio: 'inherit', env });
+    child.on('exit', code => process.exit(code ?? 0));
+    break;
+  }
+  case 'start': {
+    const target = values.url ? { ...targetFromUrl(values.url), file: undefined } : await getTarget(need(arg, 'a target'));
+    const session = await startSession(target, { runId: values.run, latest: !values.offline, exe: values.exe, log: m => console.log(m) });
+    console.log(`Session folder: ${session.dir}`);
+    process.once('SIGINT', () => session.finish());
+    try {
+      const { notes } = await session.done;
+      console.log(`\n${notes.length} note(s) in ${path.join(session.dir, 'feedback.md')}`);
+      if (notes.length) console.log(`To hand it off, tell a coding agent:\n  Read ${path.join(session.dir, 'HANDOFF.md')} and follow it.`);
+      process.exit(0);
+    } catch {
+      process.exit(1);
+    }
+    break;
+  }
+  case 'targets':
+    for (const t of await listTargets()) {
+      const state = t.error ? 'BROKEN' : t.available ? '' : `(not on ${process.platform})`;
+      console.log(`${t.id.padEnd(24)} ${(t.config?.name ?? '').padEnd(28)} ${t.source.padEnd(8)} ${state}`);
+    }
+    break;
+  case 'fetch': {
+    const { dir } = await resolveBuild(await getTarget(need(arg, 'a target')), { runId: values.run });
+    console.log(dir ?? 'This target has no build to download.');
+    break;
+  }
+  case 'builds':
+    for (const b of await listBuilds()) console.log(`${b.repo} ${b.artifact} run ${b.runId} ${b.sha.slice(0, 7)} ${b.createdAt} ${mb(b.size)}\n  ${b.dir}`);
+    break;
+  case 'sessions':
+    for (const s of await listSessions()) console.log(`${s.id.padEnd(48)} ${String(s.notes).padStart(3)} notes  ${s.status.padEnd(11)} ${mb(s.size)}`);
+    break;
+  case 'cleanup': {
+    const days = Number(need(values['older-than'], '--older-than <days>'));
+    const deleted = await cleanupSessions({ olderThanDays: days, onlyEmpty: values.empty });
+    console.log(`Deleted ${deleted.length} session(s).`);
+    break;
+  }
+  case 'validate':
+    await parseTarget(await fs.readFile(need(arg, 'a file'), 'utf8'));
+    console.log('OK');
+    break;
+  case 'prompt':
+    console.log(await authoringPrompt());
+    break;
+  default:
+    console.log(USAGE);
+    process.exit(values.help || !command ? 0 : 1);
 }
 
-const startedAt = new Date();
-const id = `${startedAt.toISOString().slice(0, 19).replace(/[:T]/g, '-')}_${run.headSha.slice(0, 7)}`;
-const sessionDir = path.join(sessionsDir(), id);
-await fs.mkdir(sessionDir, { recursive: true });
-const session = { id, repo, target: values.target, run, startedAt: startedAt.toISOString(), openExample: !values['no-example'] };
-
-console.log(`Launching FW Lite (${values.target}, ${run.headSha.slice(0, 7)})...`);
-const launch = values.target === 'maui' ? launchMaui : launchWeb;
-const launcher = await launch({ buildDir, sessionDir, exe: values.exe });
-const { notes } = await runSession({ launcher, sessionDir, session, openExample: session.openExample });
-
-console.log(`\nSession saved: ${sessionDir}`);
-console.log(`${notes.length} note(s) in ${path.join(sessionDir, 'feedback.md')}`);
-if (notes.length) {
-  console.log('\nTo hand it off, start a coding agent in your LexBox checkout and say:');
-  console.log(`  Read ${path.join(sessionDir, 'HANDOFF.md')} and follow it.`);
+function need(value, what) {
+  if (!value) {
+    console.error(`Missing ${what}.\n\n${USAGE}`);
+    process.exit(1);
+  }
+  return value;
 }
-process.exit(0);
