@@ -20,6 +20,15 @@ test('a target from a URL is valid', async () => {
   assert.throws(() => targetFromUrl('ftp://x'), /http/);
 });
 
+test('a URL without a scheme gets one', () => {
+  assert.equal(targetFromUrl('lexbox.org').config.launch.url, 'https://lexbox.org/');
+  assert.equal(targetFromUrl(' example.org/docs ').config.launch.url, 'https://example.org/docs');
+  assert.equal(targetFromUrl('localhost:3000').config.launch.url, 'http://localhost:3000/');
+  assert.equal(targetFromUrl('127.0.0.1:8080/app').config.launch.url, 'http://127.0.0.1:8080/app');
+  assert.equal(targetFromUrl('http://example.org').config.launch.url, 'http://example.org/');
+  assert.throws(() => targetFromUrl('not a url'), /isn't a web address/);
+});
+
 test('schema errors name the problem', async () => {
   assert.deepEqual(await validateTarget({ name: 'x', launch: { type: 'browser' } }), ["/launch: must have required property 'url'"]);
   const errors = await validateTarget({ name: 'x', launch: { type: 'webview2', exe: 'a.exe', url: 'nope' }, setup: [{ click: { text: 'a' }, goto: '/' }] });

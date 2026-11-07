@@ -34,7 +34,8 @@ the schema at the end of this prompt. Don't guess facts you can ask about.
 
 ## Variables
 
-Any string can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${port}`, `${arch}`
+Any string can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${buildCache}`
+(qa-recorder's download folder), `${port}`, `${arch}`
 (x64, arm64), `${platform}` (win32, linux, darwin), `${targetDir}` (the folder holding this JSON), `${build.sha}`,
 `${build.branch}`, `${build.runId}`, `${build.url}` and `${env:NAME}`.
 

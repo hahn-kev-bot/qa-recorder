@@ -19,6 +19,12 @@ function withoutRunAsNode() {
 
 const home = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-recorder-smoke-gui-'));
 const site = await serveFixture();
+const fakeBuild = path.join(home, 'builds', 'sillsdev_languageforge-lexbox', '1-fw-lite-portable');
+await fs.mkdir(fakeBuild, { recursive: true });
+await fs.writeFile(path.join(fakeBuild, 'qa-recorder-build.json'), JSON.stringify({
+  source: 'github-actions', repo: 'sillsdev/languageforge-lexbox', artifact: 'fw-lite-portable', runId: '1',
+  sha: 'fake01aaaa', title: 'Fake download', createdAt: new Date().toISOString(),
+}));
 const electronApp = await _electron.launch({
   executablePath: createRequire(import.meta.url)('electron'),
   args: [path.resolve(fileURLToPath(new URL('..', import.meta.url)))], // no trailing slash: it would escape the closing quote
@@ -26,20 +32,31 @@ const electronApp = await _electron.launch({
 });
 const win = await electronApp.firstWindow();
 win.on('console', m => { if (m.type() === 'error') console.log('[window]', m.text()); });
+const pageErrors = [];
+win.on('pageerror', e => pageErrors.push(e));
 const nav = name => win.locator('#sidebar').getByRole('button', { name });
 const main = win.locator('#main');
 
-// bundled targets are listed
-await nav(/FW Lite \(Windows\)/).waitFor();
+// bundled targets are listed; sessions default to the newest download rather than downloading
+await nav(/FW Lite \(Windows\)/).click();
+await main.locator('#build-choice').waitFor({ timeout: 30_000 });
+assert.match(await main.locator('#build-choice option:checked').textContent(), /^fake01a · Fake download .*\(newest download\)$/);
+assert.equal(await main.locator('#build-choice option').count(), 1, 'no "download the latest" choice in the list');
 
 // --- a target from a URL, with live validation
 await nav('＋ New target').click();
-await win.locator('#new-url').fill(site.url);
-await win.getByRole('button', { name: 'Fill in' }).click();
+// a bare host, as people type it, submitted with Enter
+await win.locator('#new-url').fill(site.url.replace('http://', ''));
+await win.locator('#new-url').press('Enter');
 await main.getByText('Matches the schema.').waitFor();
 assert.equal(await win.locator('#target-id').inputValue(), '127-0-0-1');
 const json = win.locator('#target-json');
 assert.match(await json.inputValue(), /"type": "browser"/);
+assert.ok((await json.inputValue()).includes(`"url": "${site.url}"`), 'a local host gets http://');
+// something that isn't an address explains itself instead of failing silently
+await win.locator('#new-url').fill('not a url');
+await win.getByRole('button', { name: 'Fill in' }).click();
+await win.locator('#toast').getByText("isn't a web address").waitFor();
 await json.fill('{ "name": "Broken", "launch": { "type": "browser" } }');
 await main.getByText("/launch: must have required property 'url'").waitFor();
 await win.locator('#target-id').fill('fixture');
@@ -112,6 +129,7 @@ const left = await fs.readdir(path.join(home, 'sessions'));
 assert.equal(left.length, 1, 'only the session with a note is left');
 assert.match(left[0], /fixture-cdp$/);
 
+assert.deepEqual(pageErrors.map(String), [], 'the window had no uncaught errors');
 await electronApp.close();
 site.close();
 console.log(`\nPASS. Home: ${home}`);

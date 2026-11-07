@@ -9,6 +9,13 @@ process.env.QA_RECORDER_HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'qa-recor
 const { startSession } = await import('../src/core/recorder.mjs');
 const { getTarget } = await import('../src/core/targets.mjs');
 
+// a downloaded build in the outer cache, which the recorded copy should see
+const fakeBuild = path.join(process.env.QA_RECORDER_HOME, 'builds', 'owner_repo', '1-app');
+await fs.mkdir(fakeBuild, { recursive: true });
+await fs.writeFile(path.join(fakeBuild, 'qa-recorder-build.json'), JSON.stringify({
+  source: 'github-actions', repo: 'owner/repo', artifact: 'app', runId: '1', sha: 'abcdef0123', title: 'Shared build', createdAt: new Date().toISOString(),
+}));
+
 const session = await startSession(await getTarget('qa-recorder'), { log: m => console.log('[session]', m) });
 await session.ready;
 const page = session.page;
@@ -18,6 +25,9 @@ const root = page.locator('#qa-recorder-root');
 await page.locator('#sidebar').getByRole('button', { name: 'All sessions' }).click();
 await page.getByText('No sessions yet.').waitFor();
 await page.locator('#sidebar').getByRole('button', { name: /QA Recorder \(this app\)/ }).waitFor();
+// …but shares the build cache
+await page.locator('#sidebar').getByRole('button', { name: 'Storage and cleanup' }).click();
+await page.getByText('Shared build').waitFor();
 
 // an element note on the recorded app's New target button
 const button = await page.locator('#sidebar').getByRole('button', { name: '＋ New target' }).boundingBox();

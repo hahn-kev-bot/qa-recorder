@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/target.schema.json",
   "name": "QA Recorder (this app)",
-  "description": "Dogfooding: this checkout's desktop app, with its own empty data folder, recorded by itself.",
+  "description": "Dogfooding: this checkout's desktop app, with its own empty data folder (but your downloaded builds), recorded by itself.",
   "launch": {
     "type": "cdp",
     "exe": {
@@ -11,7 +11,8 @@
     },
     "args": ["${targetDir}/..", "--remote-debugging-port=${port}"],
     "env": {
-      "QA_RECORDER_HOME": "${appData}/qa-recorder-home"
+      "QA_RECORDER_HOME": "${appData}/qa-recorder-home",
+      "QA_RECORDER_BUILDS": "${buildCache}"
     }
   },
   "setup": [
@@ -19,7 +20,7 @@
   ],
   "handoff": {
     "workspace": "a checkout of hahn-kev-bot/qa-recorder",
-    "context": "the app ran from the checkout that recorded it, with an empty data folder (only the bundled targets)",
+    "context": "the app ran from the checkout that recorded it, with an empty data folder (only the bundled targets) and the tester's build cache",
     "hints": "- The window is `src/gui/renderer/` (plain HTML, CSS and one classic script, no framework). It reaches the engine only through the IPC handlers in `src/gui/main.mjs`; the engine is `src/core/`.\n- Read AGENTS.md first. `npm run smoke:gui` covers the app end to end; extend it for what you change.\n- Sessions started inside the recorded app open their own windows; notes about those belong to that target, not this one."
   }
 }

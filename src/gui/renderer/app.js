@@ -34,9 +34,12 @@ async function api(channel, ...args) {
     return await window.qa.invoke(channel, ...args);
   } catch (e) {
     toast(cleanError(e), true);
+    e.shown = true; // the click dispatcher shouldn't show it again
     throw e;
   }
 }
+
+const spinner = raw('<span class="spinner" aria-hidden="true"></span>');
 const cleanError = e => String(e.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 let toastTimer;
@@ -162,26 +165,26 @@ function targetView(t) {
       ${running
         ? html`<button class="btn primary" data-action="go" data-kind="session" data-id="${running.id}">View running session</button>`
         : html`<button class="btn primary" data-action="start" data-id="${t.id}" ${!t.available || state.busy[`start:${t.id}`] ? raw('disabled') : ''}
-            title="${t.available ? '' : `This target is for ${t.platforms?.join(', ')}`}">▶ Start session</button>`}
+            title="${t.available ? '' : `This target is for ${t.platforms?.join(', ')}`}">${state.busy[`start:${t.id}`] ? html`${spinner} Starting…` : '▶ Start session'}</button>`}
     </div>
     ${ci ? html`
       <div class="card">
         <div class="row" style="justify-content:space-between">
           <h3 style="margin:0">Build: <span class="mono">${t.build.repo}</span> · ${t.build.workflow} · ${t.build.branch ?? 'develop'} · ${t.build.artifact}</h3>
-          <button class="btn" data-action="check" data-id="${t.id}" ${state.busy[`check:${t.id}`] ? raw('disabled') : ''}>Check for new build</button>
+          <button class="btn" data-action="check" data-id="${t.id}" ${state.busy[`check:${t.id}`] ? raw('disabled') : ''}>${state.busy[`check:${t.id}`] ? html`${spinner} Checking…` : 'Check for new build'}</button>
         </div>
-        ${!latest ? html`<p class="muted">Checking the latest build…</p>`
+        ${!latest ? html`<p class="muted">${spinner} Checking the latest build…</p>`
           : latest.error ? html`<p class="errors">${latest.error}</p>`
           : html`<p>Latest: <b class="mono">${sha7(latest.build)}</b> ${latest.build.title} <span class="muted small">(run ${latest.build.runId}, ${ago(latest.build.createdAt)})</span>
               ${latestDownloaded ? html`<span class="badge ok">downloaded</span>`
-                : html`<span class="badge new">new</span> <button class="btn" data-action="download" data-id="${t.id}" data-run="${latest.build.runId}" ${state.busy[`download:${t.id}`] ? raw('disabled') : ''}>${state.busy[`download:${t.id}`] ? 'Downloading…' : 'Download'}</button>`}</p>`}
+                : html`<span class="badge new">new</span> <button class="btn" data-action="download" data-id="${t.id}" data-run="${latest.build.runId}" ${state.busy[`download:${t.id}`] ? raw('disabled') : ''}>${state.busy[`download:${t.id}`] ? html`${spinner} Downloading…` : `Download${latest.build.artifactSize ? ` (${mb(latest.build.artifactSize)})` : ''}`}</button>`}</p>`}
         ${downloads.length ? html`
           <div class="row"><label for="build-choice">Run sessions on</label>
             <select id="build-choice">
-              <option value="">the latest build (checks CI, downloads if newer)</option>
-              ${downloads.map(d => html`<option value="${d.runId}" ${state.view.runId === d.runId ? raw('selected') : ''}>${sha7(d)} · ${d.title} · ${ago(d.createdAt)} · ${mb(d.size)}</option>`)}
+              ${downloads.map((d, i) => html`<option value="${d.runId}" ${(state.view.runId ?? downloads[0].runId) === d.runId ? raw('selected') : ''}>${sha7(d)} · ${d.title} · ${ago(d.createdAt)} · ${mb(d.size)}${i === 0 ? ' (newest download)' : ''}</option>`)}
             </select>
-          </div>` : ''}
+          </div>`
+        : latest ? html`<p class="muted small">Nothing downloaded yet; starting a session will offer to download the latest.</p>` : ''}
       </div>` : ''}
     ${log?.length ? html`<div class="card"><h3>Log</h3><pre class="log">${log.join('\n')}</pre></div>` : ''}
     <div class="card"><h3>Sessions</h3>${sessionsTable(sessions, { showTarget: false })}</div>`;
@@ -198,7 +201,6 @@ function sessionView(s, detail) {
         <h1>${s.target.name}</h1>
         <div class="muted">${when(s.startedAt)} · <span class="badge ${s.status}">${s.status}</span>
           ${s.build?.sha ? html` · build <span class="mono">${sha7(s.build)}</span> ${s.build.title ?? ''}` : ''}</div>
-        <div class="muted small mono">${s.dir}</div>
       </div>
       ${live ? html`<button class="btn primary" data-action="finish" data-id="${s.id}">Finish session</button>` : ''}
       <button class="btn" data-action="handoff" data-id="${s.id}" ${notes.length ? '' : raw('disabled')} title="Copies: Read …/HANDOFF.md and follow it.">Copy hand-off</button>
@@ -206,6 +208,7 @@ function sessionView(s, detail) {
       <button class="btn" data-action="open" data-path="${s.dir}">Open folder</button>
       ${live ? '' : html`<button class="btn danger" data-action="delete-session" data-id="${s.id}">Delete</button>`}
     </div>
+    <div class="path muted small mono" title="${s.dir}">${s.dir}</div>
     ${s.error ? html`<div class="card"><h3>The session hit an error</h3><pre class="log">${s.error}</pre></div>` : ''}
     ${live ? html`<div class="card"><h3>Live</h3>
       <p class="muted small">In the app: F8 pick an element · F9 drag a region · F7 general note · ⇄ moves the toolbar · Finish twice ends the session.</p>
@@ -253,7 +256,7 @@ function editorView(v) {
       <div class="grid2">
         <div class="card"><h3>From a URL</h3>
           <p class="muted small">Opens the site in a fresh Chrome or Edge profile. Edit the JSON below to add setup steps.</p>
-          <div class="row"><input type="url" id="new-url" placeholder="https://example.org" value="${v.url ?? ''}"><button class="btn" data-action="from-url">Fill in</button></div>
+          <div class="row"><input type="text" id="new-url" placeholder="example.org or https://example.org/app" value="${v.url ?? ''}"><button class="btn" data-action="from-url">Fill in</button></div>
         </div>
         <div class="card"><h3>With an AI</h3>
           <p class="muted small">Copies a prompt with the schema and an example. Paste it into your AI, answer its questions, and paste the JSON it gives you below.</p>
@@ -387,15 +390,29 @@ const actions = {
     toast('Build downloaded.');
     await checkLatest(d.id);
   })(),
+  // Runs the chosen (default: newest) downloaded build; never downloads without asking first.
   start: d => busy(`start:${d.id}`, async () => {
-    const runId = document.getElementById('build-choice')?.value || undefined;
+    const t = state.targets.find(x => x.id === d.id);
+    let runId = document.getElementById('build-choice')?.value || undefined;
+    if (!runId && t?.build?.type === 'github-actions') {
+      runId = (await api('builds:forTarget', d.id))[0]?.runId;
+      if (!runId) {
+        if (!state.latest[d.id]?.build) await checkLatest(d.id);
+        const latest = state.latest[d.id]?.build;
+        const what = latest ? `the latest build, ${sha7(latest)} ${latest.title}${latest.artifactSize ? ` (${mb(latest.artifactSize)} download)` : ''}` : 'the latest build';
+        if (!confirm(`No build of ${t.name} is downloaded yet.\n\nDownload ${what} and start?`)) return;
+      }
+    }
     const id = await api('sessions:start', d.id, { runId });
     await refresh();
     await go({ kind: 'session', id });
   })(),
   finish: d => api('sessions:finish', d.id),
   handoff: async d => toast(`Copied:\n${await api('sessions:copyHandoff', d.id)}\n\nPaste it to a coding agent in the project's repo.`),
-  open: d => api('shell:open', d.path),
+  open: async d => {
+    toast(`Opening ${d.path.split(/[\\/]/).pop()}…`);
+    await api('shell:open', d.path);
+  },
   'delete-session': async d => {
     if (!confirm('Delete this session and its screenshots?')) return;
     await api('sessions:delete', d.id);
@@ -485,11 +502,18 @@ async function validateEditor() {
   if (state.view === v) updateEditorStatus(v);
 }
 
+/** Runs an action; failures api() already reported are not shown twice, anything else gets a toast. */
+function run(name, data) {
+  Promise.resolve(actions[name]?.(data)).catch(e => {
+    if (!e?.shown) toast(cleanError(e), true);
+  });
+}
+
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-action]');
   if (!el || el.disabled) return;
   e.preventDefault();
-  void actions[el.dataset.action]?.(el.dataset);
+  run(el.dataset.action, el.dataset);
 });
 document.addEventListener('input', e => {
   if (e.target.id === 'target-json' || e.target.id === 'target-id') {
@@ -507,6 +531,7 @@ document.addEventListener('keydown', e => {
     e.target.setRangeText('  ', e.target.selectionStart, e.target.selectionEnd, 'end');
   }
   if (e.key === 'Escape') document.querySelector('.zoom')?.remove();
+  if (e.key === 'Enter' && e.target.id === 'new-url') run('from-url', {});
 });
 
 window.qa.on('log', ({ scope, message }) => {

@@ -42,6 +42,13 @@ export async function latestBuild(target, { runId } = {}) {
   return toBuild(cfg, run);
 }
 
+/** Download size of a build's artifact in bytes (zipped), so the tester can be asked before a big download. */
+export async function artifactSize(build) {
+  const sizes = JSON.parse(await gh(['api', `repos/${build.repo}/actions/runs/${build.runId}/artifacts`,
+    '--jq', `[.artifacts[] | select(.name == "${build.artifact}") | .size_in_bytes]`]));
+  return sizes[0];
+}
+
 const cacheDir = build => path.join(buildsDir(), build.repo.replace('/', '_'), `${build.runId}-${build.artifact}`);
 
 /** Every downloaded build, newest first, with its size. */

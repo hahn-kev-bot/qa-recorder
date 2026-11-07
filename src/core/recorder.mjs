@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { writeBundle } from './bundle.mjs';
 import { resolveBuild } from './builds.mjs';
 import { freePort, launch } from './launch.mjs';
-import { sessionsDir } from './paths.mjs';
+import { buildsDir, sessionsDir } from './paths.mjs';
 import { runSteps } from './steps.mjs';
 import { expand } from './targets.mjs';
 
@@ -63,6 +63,7 @@ export async function startSession(target, { runId, latest = true, exe, log } = 
         sessionDir: dir,
         appData,
         buildDir: buildDir ?? '',
+        buildCache: buildsDir(),
         port: await freePort(),
         arch: process.arch,
         platform: process.platform,
@@ -145,7 +146,8 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, onNo
       // "Failed to load resource" only names the URL in its location
       record(`console.${m.type()}`, { text: m.text().slice(0, 2000), url: m.location()?.url || undefined });
     });
-    p.on('pageerror', e => record('pageerror', { text: String(e.stack ?? e).slice(0, 4000) }));
+    // an unhandled rejection of a bare or message-less Error has an empty stack; say so rather than log nothing
+    p.on('pageerror', e => record('pageerror', { text: (e.stack || e.message || `${e.name ?? 'Error'} with no message`).slice(0, 4000) }));
     p.on('requestfailed', r => record('requestfailed', { url: r.url(), text: r.failure()?.errorText }));
     p.on('response', r => { if (r.status() >= 400) record('http', { url: r.url(), status: r.status() }); });
     p.on('framenavigated', f => { if (f === p.mainFrame()) record('navigate', { url: f.url() }); });

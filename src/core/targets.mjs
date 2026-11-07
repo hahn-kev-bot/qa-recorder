@@ -100,9 +100,25 @@ export async function deleteTarget(id) {
   await fs.rm(path.join(userTargetsDir(), `${id}.json`));
 }
 
+/**
+ * Accepts what people type: "example.org" and "example.org/docs" become https, "localhost:3000" and
+ * "127.0.0.1:8080" become http (local servers rarely have certificates).
+ */
+export function normalizeUrl(input) {
+  const s = input.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^file:/i.test(s)) return s;
+  const local = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?(\/|$)/i.test(s);
+  return `${local ? 'http' : 'https'}://${s}`;
+}
+
 /** The smallest useful target: open this URL in a fresh browser. */
 export function targetFromUrl(url) {
-  const u = new URL(url);
+  let u;
+  try {
+    u = new URL(normalizeUrl(url));
+  } catch {
+    throw new Error(`"${url}" isn't a web address. Try something like example.org or https://example.org/docs.`);
+  }
   if (!['http:', 'https:', 'file:'].includes(u.protocol)) throw new Error('Use an http, https or file URL.');
   return {
     id: slug(u.hostname || path.basename(u.pathname) || 'site'),

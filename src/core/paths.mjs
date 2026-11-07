@@ -9,7 +9,8 @@ export function qaHome() {
   return path.join(process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache'), 'qa-recorder');
 }
 
-export const buildsDir = () => path.join(qaHome(), 'builds');
+/** Downloaded builds. QA_RECORDER_BUILDS shares one cache between data folders (the dogfood target uses it). */
+export const buildsDir = () => (process.env.QA_RECORDER_BUILDS ? path.resolve(process.env.QA_RECORDER_BUILDS) : path.join(qaHome(), 'builds'));
 export const sessionsDir = () => path.join(qaHome(), 'sessions');
 export const userTargetsDir = () => path.join(qaHome(), 'targets');
 export const profilesDir = () => path.join(qaHome(), 'profiles');

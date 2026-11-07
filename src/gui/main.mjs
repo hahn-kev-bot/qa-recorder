@@ -1,9 +1,10 @@
 // Electron main process: owns the core (builds, sessions, Playwright) and serves it to the window over IPC.
 import { app, BrowserWindow, clipboard, ipcMain, net, protocol, shell } from 'electron';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildsFor, deleteBuild, downloadBuild, latestBuild, listBuilds, pruneBuilds } from '../core/builds.mjs';
+import { artifactSize, buildsFor, deleteBuild, downloadBuild, latestBuild, listBuilds, pruneBuilds } from '../core/builds.mjs';
 import { qaHome, sessionsDir } from '../core/paths.mjs';
 import { startSession } from '../core/recorder.mjs';
 import { cleanupSessions, deleteSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
@@ -63,7 +64,10 @@ const handlers = {
     return prompt.length;
   },
 
-  'builds:latest': async targetId => latestBuild(await getTarget(targetId)),
+  'builds:latest': async targetId => {
+    const build = await latestBuild(await getTarget(targetId));
+    return build && { ...build, artifactSize: await artifactSize(build).catch(() => undefined) };
+  },
   'builds:forTarget': async targetId => buildsFor(await getTarget(targetId)),
   'builds:download': async (targetId, runId) => {
     const target = await getTarget(targetId);
@@ -105,20 +109,23 @@ const handlers = {
 
   'storage:summary': () => storageSummary({ live: liveIds() }),
 
-  'shell:open': p => openInside(p, shell.openPath),
-  'shell:show': p => openInside(p, async x => shell.showItemInFolder(x)),
-  'shell:openUrl': url => {
-    if (!/^https:\/\//.test(url)) throw new Error('Only https links open externally.');
-    return shell.openExternal(url);
-  },
+  'shell:open': p => openInside(p),
 };
 
-/** The window may only open files the tool owns (sessions, builds, targets). */
-async function openInside(p, open) {
+/**
+ * Opens a file or folder the tool owns (sessions, builds, targets) in its default app. On Windows, shell.openPath
+ * can stall the whole app while Explorer or the file's app starts, so hand the path to explorer.exe and return.
+ */
+async function openInside(p) {
   const resolved = path.resolve(p);
   const roots = [qaHome(), fileURLToPath(new URL('../../configs/', import.meta.url))].map(r => path.resolve(r) + path.sep);
   if (!roots.some(r => resolved.startsWith(r))) throw new Error(`Not a qa-recorder file: ${p}`);
-  const error = await open(resolved);
+  await fs.access(resolved);
+  if (process.platform === 'win32') {
+    spawn('explorer.exe', [resolved], { detached: true, stdio: 'ignore' }).unref();
+    return;
+  }
+  const error = await shell.openPath(resolved);
   if (error) throw new Error(error);
 }
 

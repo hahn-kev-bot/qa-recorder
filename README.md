@@ -75,7 +75,8 @@ environment variables that keep it away from real data, setup steps that open th
 for noise in the error log, and hints for the agent.
 
 [`configs/qa-recorder.json`](configs/qa-recorder.json) is for dogfooding: it runs this checkout's desktop app with
-its own empty data folder and records it with itself. QA the tool with it, then hand the session to an agent working
+its own empty data folder (sharing your downloaded builds, so deleting builds there deletes yours) and records it with
+itself. QA the tool with it, then hand the session to an agent working
 in this repo.
 
 | Part | What it does |
@@ -86,7 +87,7 @@ in this repo.
 | `capture.ignore` | leave matching events out of the error log (`type`, `text`, `url`; `*` wildcard) |
 | `handoff` | `workspace`, `context`, `hints` for HANDOFF.md |
 
-Strings can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${port}`, `${arch}`,
+Strings can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${buildCache}`, `${port}`, `${arch}`,
 `${platform}`, `${targetDir}`, `${build.sha}`, `${build.branch}`, `${build.runId}`, `${build.url}` and `${env:NAME}`.
 
 To make a new target in the app: paste a URL, or **Copy AI prompt** ([AUTHORING.md](AUTHORING.md) plus the schema),
@@ -94,7 +95,8 @@ give it to an AI, answer its questions, and paste the JSON it writes. The editor
 
 ## Data
 
-Under `%LOCALAPPDATA%\qa-recorder` (or `~/.cache/qa-recorder`; set `QA_RECORDER_HOME` to move it):
+Under `%LOCALAPPDATA%\qa-recorder` (or `~/.cache/qa-recorder`; set `QA_RECORDER_HOME` to move it, or
+`QA_RECORDER_BUILDS` to move just the build cache):
 
 | Folder | Contents |
 |---|---|
