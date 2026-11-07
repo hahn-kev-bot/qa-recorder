@@ -53,13 +53,23 @@ async function startProcess(launch, buildDir, appData, extraEnv = {}) {
     cwd,
     stdio: 'ignore',
     shell: launch.shell ?? false,
-    env: { ...process.env, ...launch.env, ...extraEnv },
+    env: { ...inheritedEnv(), ...launch.env, ...extraEnv },
   });
   await new Promise((resolve, reject) => {
     child.once('spawn', resolve);
     child.once('error', e => reject(new Error(`Couldn't start ${exe}: ${e.message}`)));
   });
   return child;
+}
+
+/**
+ * Our environment minus ELECTRON_RUN_AS_NODE: Electron-based editors set it for their terminals (and Electron sets
+ * it for us), and an Electron app under test would start as plain Node. A target can still set it in launch.env.
+ */
+function inheritedEnv() {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return env;
 }
 
 /** Kill a process and wait for it to be gone, so callers can rely on it having exited. */

@@ -74,6 +74,10 @@ The smallest target:
 environment variables that keep it away from real data, setup steps that open the example project, an ignore rule
 for noise in the error log, and hints for the agent.
 
+[`configs/qa-recorder.json`](configs/qa-recorder.json) is for dogfooding: it runs this checkout's desktop app with
+its own empty data folder and records it with itself. QA the tool with it, then hand the session to an agent working
+in this repo.
+
 | Part | What it does |
 |---|---|
 | `build` | `github-actions` (repo, workflow, branch, artifact; latest successful run, cached) or `local` (a folder) |
@@ -117,6 +121,7 @@ npm run check          # syntax of every source file
 npm run smoke:url      # website target end to end (opens Chrome/Edge)
 npm run smoke:gui      # the desktop app end to end (opens the app and browsers)
 npm run smoke:fwlite   # Windows: FW Lite's latest develop build end to end
+npm run smoke:dogfood  # the qa-recorder target: this app recording itself
 ```
 
 ## Not yet

@@ -14,7 +14,8 @@
     "check": "node test/check.mjs",
     "smoke:url": "node test/smoke-url.mjs",
     "smoke:gui": "node test/smoke-gui.mjs",
-    "smoke:fwlite": "node test/smoke-fwlite.mjs"
+    "smoke:fwlite": "node test/smoke-fwlite.mjs",
+    "smoke:dogfood": "node test/smoke-dogfood.mjs"
   },
   "engines": {
     "node": ">=22"
