@@ -406,12 +406,12 @@ function remarkCard(s, x) {
   </div>`;
 }
 
-const TIMELINE_ICON = { action: '›', navigate: '↪', error: '⚠', note: '📝', speech: '🎙', end: '■' };
+const TIMELINE_ICON = { action: '›', navigate: '↪', tab: '🗂', error: '⚠', note: '📝', speech: '🎙', end: '■' };
 const TIMELINE_FILTERS = [
   ['all', 'Everything', () => true],
   ['said', 'Notes & speech', r => r.kind === 'note' || r.kind === 'speech'],
   ['actions', 'Actions', r => r.kind === 'action'],
-  ['pages', 'Pages', r => r.kind === 'navigate'],
+  ['pages', 'Pages', r => r.kind === 'navigate' || r.kind === 'tab'],
   ['errors', 'Errors', r => r.kind === 'error'],
 ];
 

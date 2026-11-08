@@ -104,6 +104,9 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
       controller.page = app.page;
       controller.context = app.context;
       const capture = target.config.capture ?? {};
+      // the tab the tester is looking at, for spoken remarks' screenshots
+      let tabsTracker;
+      const shownPage = () => tabsTracker?.activePage() ?? app.page;
       if (voice !== 'off') {
         say(`Voice: ${voice === 'push-to-talk' ? `push-to-talk (hold ${TALK_KEY} in the app, or hold 🎙 on its toolbar)` : 'open mic (🎙 on the toolbar mutes)'}.`);
         controller.voice = createSessionVoice({
@@ -111,8 +114,8 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
           // These happen while the tester talks or browses, so they must not touch the page: hiding the toolbar (or
           // Playwright's default of hiding the text cursor) makes the page flash every time. The toolbar shows in a
           // corner of these screenshots instead; notes the tester captures still leave it out.
-          screenshot: file => app.page.screenshot({ path: file, caret: 'initial' }),
-          currentUrl: () => app.page.url(),
+          screenshot: file => shownPage().screenshot({ path: file, caret: 'initial' }),
+          currentUrl: () => shownPage().url(),
           onNote: n => emitter.emit('note', n),
           onSpeech: s => emitter.emit('speech', s),
           onAudio: info => { session.audio = info; },
@@ -120,7 +123,7 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
           log: say,
         });
       }
-      await attachRecorder(app.context, {
+      tabsTracker = await attachRecorder(app.context, {
         dir, notes, events, flush,
         ignore: capture.ignore ?? [],
         overlayConfig: { typedText: capture.typedText ?? true, voice, talkKey: TALK_KEY },
@@ -181,16 +184,31 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
 
 /** Injects the toolbar and records notes, actions, errors and navigation. */
 async function attachRecorder(context, { dir, notes, events, flush, ignore, overlayConfig, getVoice, isSetup, onNote, onAction, onFinish }) {
-  const record = (type, data) => {
+  // Browser tabs, numbered in the order they appear. Every event says which tab it came from, and the timeline
+  // says when a tab opens, closes, or the tester moves to another one.
+  const tabs = new Map();
+  let active;
+  const record = (type, data, page) => {
     // while the setup steps run, what happens is theirs, not the tester's
-    const event = { at: new Date().toISOString(), type, ...data, ...(isSetup() ? { setup: true } : {}) };
+    const event = { at: new Date().toISOString(), type, ...data, ...(page && tabs.has(page) ? { tab: tabs.get(page) } : {}), ...(isSetup() ? { setup: true } : {}) };
     if (!ignore.some(rule => matchesRule(rule, event))) events.push(event);
     return event;
   };
-  await context.exposeBinding('__qaRecorderAction', (_source, action) => {
+  /** The tester is looking at this tab now: note the switch, and give spoken remarks a screenshot of it. */
+  const show = p => {
+    if (!tabs.has(p) || p === active || p.isClosed()) return;
+    const first = !active;
+    active = p;
+    if (first) return;
+    record('tab', { change: 'switched', url: isWeb(p.url()) ? p.url() : undefined }, p);
+    if (!isSetup()) getVoice()?.pageChanged();
+  };
+  await context.exposeBinding('__qaRecorderAction', ({ page: source }, action) => {
     if (!action || typeof action !== 'object') return;
-    onAction(record('action', action));
+    show(source);
+    onAction(record('action', action, source));
   });
+  await context.exposeBinding('__qaRecorderTabShown', ({ page: source }) => show(source));
   await context.exposeBinding('__qaRecorderNote', async ({ page: source }, note) => {
     const id = String(notes.length + 1).padStart(3, '0');
     const full = `notes/${id}-full.png`;
@@ -221,28 +239,54 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, over
   await context.addInitScript({ content: configScript });
   await context.addInitScript({ content: overlaySource });
 
-  const watch = p => {
+  const watch = (p, { opened = false } = {}) => {
+    tabs.set(p, tabs.size + 1);
+    active ??= p;
+    if (opened) {
+      // a link or window.open has an opener; a new tab the tester opened (Ctrl+T) doesn't
+      p.opener().then(o => record('tab', { change: 'opened', from: o ? tabs.get(o) : undefined, url: isWeb(p.url()) ? p.url() : undefined }, p))
+        .catch(() => record('tab', { change: 'opened' }, p));
+    }
+    // the browser's own pages (a new tab, settings) aren't the app: their messages aren't the app's errors
+    const fromApp = () => isWeb(p.url());
     p.on('console', m => {
-      if (m.type() !== 'error' && m.type() !== 'warning') return;
+      if ((m.type() !== 'error' && m.type() !== 'warning') || !fromApp()) return;
       // "Failed to load resource" only names the URL in its location
-      record(`console.${m.type()}`, { text: m.text().slice(0, 2000), url: m.location()?.url || undefined });
+      record(`console.${m.type()}`, { text: m.text().slice(0, 2000), url: m.location()?.url || undefined }, p);
     });
     // an unhandled rejection of a bare or message-less Error has an empty stack; say so rather than log nothing
-    p.on('pageerror', e => record('pageerror', { text: (e.stack || e.message || `${e.name ?? 'Error'} with no message`).slice(0, 4000) }));
-    p.on('requestfailed', r => record('requestfailed', { url: r.url(), text: r.failure()?.errorText }));
-    p.on('response', r => { if (r.status() >= 400) record('http', { url: r.url(), status: r.status() }); });
+    p.on('pageerror', e => { if (fromApp()) record('pageerror', { text: (e.stack || e.message || `${e.name ?? 'Error'} with no message`).slice(0, 4000) }, p); });
+    p.on('requestfailed', r => {
+      // ERR_ABORTED is the page cancelling its own request (leaving the page, a closed stream), not a failure
+      const text = r.failure()?.errorText;
+      if (fromApp() && text !== 'net::ERR_ABORTED') record('requestfailed', { url: r.url(), text }, p);
+    });
+    p.on('response', r => { if (r.status() >= 400 && fromApp()) record('http', { url: r.url(), status: r.status() }, p); });
     p.on('framenavigated', f => {
-      if (f !== p.mainFrame()) return;
-      record('navigate', { url: f.url() });
+      if (f !== p.mainFrame() || !isWeb(f.url())) return;
+      record('navigate', { url: f.url() }, p);
+      if (p !== active) {
+        // a tab the tester opened and is now using (typed an address in it) rather than one loading behind
+        p.evaluate(() => document.visibilityState).then(v => { if (v === 'visible') show(p); }).catch(() => {});
+        return;
+      }
       if (!isSetup()) getVoice()?.pageChanged();
+    });
+    p.on('close', () => {
+      if (events.some(e => e.type === 'end')) return; // the session is closing the browser, not the tester
+      record('tab', { change: 'closed' }, p);
+      if (active === p) active = context.pages().find(x => x !== p && !x.isClosed());
     });
   };
   for (const p of context.pages()) {
     watch(p);
     await p.evaluate(`${configScript}\n${overlaySource}`).catch(() => {}); // already loaded, so the init scripts missed it
   }
-  context.on('page', watch);
+  context.on('page', p => watch(p, { opened: true }));
+  return { activePage: () => (active && !active.isClosed() ? active : undefined) };
 }
+
+const isWeb = url => /^(https?|file):/i.test(url ?? '');
 
 const wildcard = pattern => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 's');
 

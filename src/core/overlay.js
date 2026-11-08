@@ -6,7 +6,17 @@
 // swallows every event that involves the toolbar and hands it to the toolbar's own handlers instead.
 (() => {
   if (window.top !== window || window.__qaRecorder) return;
+  // the browser's own pages (a new tab, settings) aren't the app, and some refuse injected markup
+  if (!/^(https?|file):$/.test(location.protocol)) return;
   window.__qaRecorder = true;
+
+  // Pages that enforce Trusted Types refuse plain strings for innerHTML. Our markup is static, so a policy that
+  // passes it through is safe; if the page's CSP forbids new policies, the toolbar stays off rather than throwing.
+  let policy;
+  try {
+    policy = window.trustedTypes?.createPolicy('qa-recorder', { createHTML: s => s });
+  } catch { /* not allowed here */ }
+  const html = s => (policy ? policy.createHTML(s) : s);
 
   const KINDS = [
     { id: 'bug', label: '🐛 Bug' },
@@ -144,14 +154,14 @@
     sendAction({ action: 'key', key, target: e.target instanceof Element && e.target !== document.body ? brief(e.target) : undefined });
   }, true);
 
-  function mount() {
+  function mountToolbar() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', mount, { once: true });
     host = document.createElement('div');
     host.id = 'qa-recorder-root';
     host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
     document.documentElement.appendChild(host);
     const root = host.attachShadow({ mode: 'open' });
-    root.innerHTML = `
+    root.innerHTML = html(`
 <style>
   * { box-sizing: border-box; font: 13px/1.4 system-ui, sans-serif; }
   .bar { position: fixed; bottom: 12px; display: flex; gap: 2px; align-items: center; padding: 4px;
@@ -192,7 +202,7 @@
   ${config.voice === 'open-mic' ? '<button data-act="mic" class="mic live" title="Open mic: everything you say is transcribed. Click to mute.">🎙 Live</button>' : ''}
   <button data-act="side" title="Move the toolbar to the other side">⇄</button>
   <button data-act="finish" class="finish" title="Finish the session and close the app">Finish</button>
-</div>`;
+</div>`);
     const bar = root.querySelector('.bar');
     const countEl = root.querySelector('.count');
     const finishBtn = root.querySelector('.finish');
@@ -347,11 +357,11 @@
 
     function openForm(rect, target) {
       const form = add('form');
-      form.innerHTML = `
+      form.innerHTML = html(`
         <div class="kinds">${KINDS.map((k, i) => `<button data-kind="${k.id}" aria-pressed="${i === 0}">${k.label}</button>`).join('')}</div>
         <textarea placeholder="What happened, what did you expect?"></textarea>
         <div class="actions"><span>Ctrl+Enter to save · Esc to cancel</span>
-          <span><button data-form="cancel">Cancel</button> <button data-form="save" class="save">Save</button></span></div>`;
+          <span><button data-form="cancel">Cancel</button> <button data-form="save" class="save">Save</button></span></div>`);
       if (rect) place(root.querySelector('.sel') ?? add('sel'), rect);
       // next to the selection when it fits, else centred
       const fw = 340, fh = 200;
@@ -448,5 +458,20 @@
     return parts.join(' > ');
   }
 
+  // never break the page: if the toolbar can't be drawn here, the timeline still records
+  function mount() {
+    try {
+      mountToolbar();
+    } catch {
+      host?.remove();
+      host = null;
+      ui = null;
+    }
+  }
   mount();
+
+  // switching browser tabs: the recorder notes which tab the tester is looking at
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void window.__qaRecorderTabShown?.()?.catch?.(() => {});
+  });
 })();

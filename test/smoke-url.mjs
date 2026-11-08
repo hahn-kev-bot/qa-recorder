@@ -68,6 +68,21 @@ await countIs(2);
 await page.getByRole('link', { name: 'Next page' }).click();
 await page.waitForURL('**/page2.html');
 await root.locator('button[data-act="finish"]').waitFor();
+
+// tabs: a link that opens a new tab, on a page that only accepts Trusted Types markup (the toolbar must still load)
+const [help] = await Promise.all([session.context.waitForEvent('page'), page.getByRole('link', { name: 'Open help in a new tab' }).click()]);
+await help.waitForURL('**/strict.html');
+await help.locator('#qa-recorder-root button[data-act="finish"]').waitFor();
+await help.getByRole('button', { name: 'Got it' }).click();
+// a new tab the tester opens themselves (Ctrl+T): the browser's own page, no toolbar and none of its errors
+const blank = await session.context.newPage();
+await blank.goto('chrome://new-tab-page/').catch(() => blank.goto('about:blank'));
+await blank.waitForTimeout(500);
+assert.equal(await blank.evaluate(() => !!document.getElementById('qa-recorder-root')), false, 'no toolbar on the browser\'s own page');
+await blank.close();
+// back to the first tab, and on to Finish there
+await page.bringToFront();
+await page.getByRole('heading', { name: 'Page two' }).click();
 await root.locator('button[data-act="finish"]').click();
 await root.locator('button[data-act="finish"]').click();
 const { notes, events } = await session.done;
@@ -107,6 +122,18 @@ assert.match(timeline, /\*\*note 001\*\*/);
 assert.match(timeline, /went to `http:\/\/127\.0\.0\.1:\d+\/page2\.html`/);
 assert.match(timeline, /⚠ http 404/);
 assert.match(handoff, /timeline\.md/);
+
+// tabs: which tab things happened in, and nothing from the recorder or the browser's own pages as an app error
+assert.ok(!events.some(e => e.type === 'pageerror'), `no page errors (${events.filter(e => e.type === 'pageerror').map(e => e.text)})`);
+assert.ok(!events.some(e => e.text === 'net::ERR_ABORTED'), 'cancelled requests are not failures');
+assert.ok(events.some(e => e.type === 'action' && e.tab === 2 && e.target?.name === 'Got it'), 'the click in the new tab is tab 2\'s');
+assert.match(timeline, /🗂 opened tab 2 from tab 1/);
+assert.match(timeline, /tab 2 went to `http:\/\/127\.0\.0\.1:\d+\/strict\.html`|🗂 switched to tab 2/);
+assert.match(timeline, /click button “Got it”/);
+assert.match(timeline, /🗂 opened tab 3\n/, 'a tab opened by the tester has no opener');
+assert.match(timeline, /🗂 closed tab 3/);
+assert.match(timeline, /🗂 switched to tab 1 \(http:\/\/127\.0\.0\.1:\d+\/page2\.html\)\n.*click h1 “Page two”/);
+assert.doesNotMatch(timeline, /chrome:\/\//, 'the browser\'s own pages are not app pages');
 
 // the trace: saved at Finish, with the timeline as markers
 assert.deepEqual(saved.trace, ['trace/001.zip']);

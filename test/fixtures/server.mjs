@@ -11,7 +11,11 @@ export async function serveFixture() {
     const name = new URL(req.url, 'http://x').pathname.replace(/^\/$/, '/index.html');
     try {
       const body = await fs.readFile(path.join(root, path.normalize(name)));
-      res.writeHead(200, { 'content-type': name.endsWith('.html') ? 'text/html' : 'application/octet-stream' }).end(body);
+      res.writeHead(200, {
+        'content-type': name.endsWith('.html') ? 'text/html' : 'application/octet-stream',
+        // a page that only accepts Trusted Types for markup, as some sites (and the browser's own pages) do
+        ...(name === '/strict.html' ? { 'content-security-policy': "require-trusted-types-for 'script'" } : {}),
+      }).end(body);
     } catch {
       res.writeHead(404).end('not found');
     }

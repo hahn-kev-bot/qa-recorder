@@ -46,17 +46,53 @@ export function describeAction(a) {
   }
 }
 
-/** Actions and page changes between the previous note and this one: how the tester got here. */
+/** "opened tab 2 from tab 1", "switched to tab 2 (http://…)", "closed tab 2" */
+export function describeTab(e) {
+  switch (e.change) {
+    case 'opened': return `opened tab ${e.tab}${e.from ? ` from tab ${e.from}` : ''}${e.url ? ` at ${shortUrl(e.url)}` : ''}`;
+    case 'switched': return `switched to tab ${e.tab}${e.url ? ` (${shortUrl(e.url)})` : ''}`;
+    case 'closed': return `closed tab ${e.tab}`;
+    default: return `tab ${e.tab} ${e.change}`;
+  }
+}
+
+/**
+ * Walks the events the way the tester saw them: one line per action, page change and tab change. Page loads in a
+ * tab the tester isn't on are labelled with their tab; with only one tab, tabs are never mentioned.
+ */
+function readEvents(events, onLine) {
+  const multiTab = events.some(e => e.type === 'tab' && e.change === 'opened');
+  let current = events.find(e => e.tab)?.tab;
+  const lastUrl = new Map();
+  for (const e of events) {
+    if (e.type === 'action') {
+      if (multiTab && e.tab && e.tab !== current) onLine(e, 'tab', `switched to tab ${e.tab}`); // no visibility event came
+      current = e.tab ?? current;
+      onLine(e, 'action', describeAction(e));
+    } else if (e.type === 'navigate') {
+      const url = shortUrl(e.url);
+      if (lastUrl.get(e.tab) === url) continue;
+      lastUrl.set(e.tab, url);
+      onLine(e, 'navigate', `${multiTab && e.tab && e.tab !== current ? `tab ${e.tab} ` : ''}went to ${url}`);
+    } else if (e.type === 'tab' && multiTab) {
+      if (e.change === 'switched') {
+        if (e.tab === current) continue;
+        current = e.tab;
+      }
+      onLine(e, 'tab', describeTab(e));
+    }
+  }
+}
+
+/** Actions, page and tab changes between the previous note and this one: how the tester got here. */
 export function stepsBefore(note, previous, events) {
   const from = previous ? Date.parse(previous.at) : 0;
   const to = Date.parse(note.at);
   const steps = [];
-  for (const e of events) {
+  readEvents(events, (e, _kind, text) => {
     const at = Date.parse(e.at);
-    if (at <= from || at > to) continue;
-    if (e.type === 'action' && !e.setup) steps.push(describeAction(e));
-    else if (e.type === 'navigate' && !e.setup && steps.at(-1) !== `went to ${shortUrl(e.url)}`) steps.push(`went to ${shortUrl(e.url)}`);
-  }
+    if (at > from && at <= to && !e.setup) steps.push(text);
+  });
   return steps;
 }
 
@@ -143,14 +179,9 @@ function clock(session, iso) {
  */
 export function timelineRows(session, notes, events, speech = []) {
   const rows = [];
-  let lastUrl;
+  readEvents(events, (e, kind, text) => rows.push({ at: e.at, kind, text, setup: e.setup }));
   for (const e of events) {
-    if (e.type === 'action') rows.push({ at: e.at, kind: 'action', text: describeAction(e), setup: e.setup });
-    else if (e.type === 'navigate') {
-      const url = shortUrl(e.url);
-      if (url !== lastUrl) rows.push({ at: e.at, kind: 'navigate', text: `went to ${url}`, setup: e.setup });
-      lastUrl = url;
-    } else if (ERROR_TYPES.has(e.type)) rows.push({ at: e.at, kind: 'error', text: `${e.type} ${describeEvent(e)}` });
+    if (ERROR_TYPES.has(e.type)) rows.push({ at: e.at, kind: 'error', text: `${e.type} ${describeEvent(e)}` });
     else if (e.type === 'end') rows.push({ at: e.at, kind: 'end', text: 'session ended' });
   }
   for (const n of notes) {
@@ -169,7 +200,8 @@ export function timelineRows(session, notes, events, speech = []) {
 function timelineLine(r) {
   switch (r.kind) {
     case 'action': return `${r.text}${r.setup ? ' _(setup step)_' : ''}`;
-    case 'navigate': return `${r.text.replace(/^went to (.*)$/, 'went to `$1`')}${r.setup ? ' _(setup step)_' : ''}`;
+    case 'navigate': return `${r.text.replace(/went to (.*)$/, 'went to `$1`')}${r.setup ? ' _(setup step)_' : ''}`;
+    case 'tab': return `🗂 ${r.text}`;
     case 'error': return `⚠ ${r.text}`;
     case 'note': return `**note ${r.id}** ${r.summary} ([screenshot](${r.link}))`;
     case 'speech': return `🎙 ${r.text}${r.link ? ` ([screen](${r.link}))` : ''}`;
