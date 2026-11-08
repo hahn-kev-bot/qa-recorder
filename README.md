@@ -30,6 +30,9 @@ npm start                       # the desktop app
 In the app you pick a target, check for and download new CI builds, start a session, watch notes arrive, open the
 session's feedback, copy the hand-off line for your agent, and clean up old sessions and builds.
 
+On Windows, `qa-recorder.bat` opens the app without a terminal (and runs `npm install` the first time). Make a
+desktop shortcut to it: right-click it, Show more options, Send to, Desktop (create shortcut).
+
 The same things work from the command line:
 
 ```sh
