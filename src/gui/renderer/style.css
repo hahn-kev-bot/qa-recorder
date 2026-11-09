@@ -96,3 +96,8 @@ button.btn.play { padding: 1px 7px; font-size: 11px; }
 .meter { height: 10px; border-radius: 5px; background: var(--hover); overflow: hidden; margin: 14px 0 8px; }
 #meter-bar { height: 100%; width: 0; background: var(--ok); transition: width .08s linear; }
 audio { width: 100%; max-width: 420px; }
+
+/* About page */
+.about-head { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.about-head h1 { margin: 0; }
+.card table th { text-align: left; font-weight: 600; padding-right: 16px; white-space: nowrap; }

@@ -241,7 +241,8 @@ function sidebar() {
       <span class="grow">All sessions</span>${state.sessions.some(isLive) ? raw('<span class="dot"></span>') : ''}
     </button>
     <button class="nav ${v.kind === 'storage' ? 'on' : ''}" data-action="go" data-kind="storage">Storage and cleanup</button>
-    <button class="nav ${v.kind === 'mic' ? 'on' : ''}" data-action="go" data-kind="mic">Microphone</button>`;
+    <button class="nav ${v.kind === 'mic' ? 'on' : ''}" data-action="go" data-kind="mic">Microphone</button>
+    <button class="nav ${v.kind === 'about' ? 'on' : ''}" data-action="go" data-kind="about">About</button>`;
 }
 
 function sessionsTable(sessions, { showTarget }) {
@@ -526,6 +527,35 @@ function storageView(s) {
     <div class="card"><h3>Largest sessions</h3>${sessionsTable([...s.sessions].sort((a, b) => b.size - a.size).slice(0, 15), { showTarget: true })}</div>`;
 }
 
+function aboutView(a) {
+  if (!a) return html`<p class="muted">Loading…</p>`;
+  const folder = (label, p) => html`<tr><th>${label}</th><td class="mono small">${p}</td><td><button class="btn small-btn" data-action="open" data-path="${p}">Open</button></td></tr>`;
+  return html`
+    <div class="about-head">
+      <img src="../../../assets/icon.svg" alt="" width="72" height="72">
+      <div><h1>QA Recorder</h1><div class="muted">Version ${a.version}</div></div>
+    </div>
+    <div class="card">
+      <p>${a.description}</p>
+      <p>Pick a target, start a session and use the app as usual. The toolbar in the app takes notes:
+        <b>F7</b> a general note, <b>F8</b> pick an element, <b>F9</b> drag a region, and <b>F6</b> held to talk when push-to-talk is on.
+        Every click, page change and error goes into the session's timeline, and <b>Copy hand-off</b> gives a coding agent everything it needs.</p>
+      ${a.repo ? html`<p><button class="btn" data-action="open-repo">Source, issues and docs on GitHub</button> <span class="muted small mono">${a.repo}</span></p>` : ''}
+    </div>
+    <div class="card"><h3>Your data</h3>
+      <table>${folder('Data folder', a.home)}${folder('Sessions', a.sessions)}${folder('Builds', a.builds)}${folder('Speech models', a.models)}</table>
+      <p class="muted small">Everything stays on this computer: recordings, screenshots and transcripts are never uploaded. Speech is transcribed locally.</p>
+    </div>
+    <div class="card"><h3>Speech models</h3>
+      <table>${a.speech.map(m => html`<tr><th>${m.label}</th><td>${m.size}</td><td>${m.downloaded ? '✓ downloaded' : html`<span class="muted">downloads when first used</span>`}</td></tr>`)}</table>
+    </div>
+    <div class="card"><h3>Versions</h3>
+      <table><tr><th>QA Recorder</th><td class="mono">${a.version}</td></tr><tr><th>Electron</th><td class="mono">${a.versions.electron}</td></tr>
+        <tr><th>Chromium</th><td class="mono">${a.versions.chrome}</td></tr><tr><th>Node.js</th><td class="mono">${a.versions.node}</td></tr>
+        <tr><th>Platform</th><td class="mono">${a.platform}</td></tr></table>
+    </div>`;
+}
+
 // ---------- render ----------
 
 function render() {
@@ -547,6 +577,8 @@ function render() {
     content = storageView(v.summary);
   } else if (v.kind === 'mic') {
     content = micView(v);
+  } else if (v.kind === 'about') {
+    content = aboutView(v.about);
   } else {
     content = allSessionsView();
   }
@@ -656,6 +688,9 @@ async function go(view) {
   } else if (view.kind === 'storage') {
     view.summary = await api('storage:summary');
     if (state.view === view) render();
+  } else if (view.kind === 'about') {
+    view.about = await api('app:about');
+    if (state.view === view) render();
   } else if (view.kind === 'sessions') {
     await refresh();
   }
@@ -731,6 +766,7 @@ const actions = {
     toast(`Opening ${d.path.split(/[\\/]/).pop()}…`);
     await api('shell:open', d.path);
   },
+  'open-repo': () => api('app:openRepo'),
   'delete-session': async d => {
     if (!confirm('Delete this session and its screenshots?')) return;
     await api('sessions:delete', d.id);

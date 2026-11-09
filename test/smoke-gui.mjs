@@ -139,6 +139,15 @@ const left = await fs.readdir(path.join(home, 'sessions'));
 assert.equal(left.length, 1, 'only the session with a note is left');
 assert.match(left[0], /fixture-cdp$/);
 
+// --- the About page: version, the app's folders, and the icon actually loads
+await nav('About').click();
+const version = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
+await main.getByText(`Version ${version}`).waitFor();
+await main.getByRole('button', { name: 'Source, issues and docs on GitHub' }).waitFor();
+assert.ok((await main.textContent()).includes(home), 'shows the data folder');
+await win.waitForFunction(() => document.querySelector('.about-head img')?.naturalWidth > 0, null, { timeout: 5000 });
+await win.screenshot({ path: path.join(home, 'about.png') });
+
 assert.deepEqual(pageErrors.map(String), [], 'the window had no uncaught errors');
 await electronApp.close();
 site.close();

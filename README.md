@@ -13,6 +13,23 @@ flowchart LR
   F --> A[coding agent]
 ```
 
+## Screenshots
+
+The toolbar in the app under test. Drag a region (F9), pick an element (F8) or write a general note (F7), and say what
+kind of feedback it is:
+
+![The feedback toolbar on a web page, with a note being written about the selected filter buttons](docs/screenshots/toolbar.png)
+
+The session in the desktop app: each note with its screenshot, the page it was on, and the steps before it:
+
+![A finished session in the desktop app, listing three notes with screenshots](docs/screenshots/session.png)
+
+Everything the tester did, in order. The same timeline goes into the hand-off for the coding agent:
+
+![The session timeline: page loads, clicks, typing and notes, each with its time](docs/screenshots/timeline.png)
+
+The screenshots show a made-up shop. To retake them after changing the UI, run `node scripts/readme-screenshots.mjs`.
+
 ## Requirements
 
 - Node 22+

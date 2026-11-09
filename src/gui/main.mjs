@@ -5,13 +5,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { artifactSize, buildsFor, deleteBuild, downloadBuild, latestBuild, listBuilds, pruneBuilds } from '../core/builds.mjs';
-import { qaHome, sessionsDir } from '../core/paths.mjs';
+import { buildsDir, qaHome, sessionsDir } from '../core/paths.mjs';
 import { startSession } from '../core/recorder.mjs';
 import { serveFile } from '../core/serve-file.mjs';
 import { analyzeAudio } from '../core/speech/analyze.mjs';
 import { normalize } from '../core/speech/chunker.mjs';
 import { retranscribeSession } from '../core/speech/retranscribe.mjs';
-import { createTranscriber, isDownloaded, MODELS, modelFor } from '../core/speech/transcriber.mjs';
+import { createTranscriber, isDownloaded, MODELS, modelFor, modelsDir } from '../core/speech/transcriber.mjs';
 import { cleanupSessions, deleteSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
 import {
   authoringPrompt, deleteTarget, getTarget, listTargets, saveTarget, slug, targetFromUrl, validateTarget,
@@ -29,6 +29,23 @@ const liveIds = () => new Set(live.keys());
 
 const handlers = {
   'app:info': () => ({ home: qaHome(), version: app.getVersion(), platform: process.platform }),
+  'app:about': async () => {
+    const pkg = JSON.parse(await fs.readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    return {
+      version: pkg.version,
+      description: pkg.description,
+      repo: repoUrl(pkg),
+      home: qaHome(),
+      sessions: sessionsDir(),
+      builds: buildsDir(),
+      models: modelsDir(),
+      speech: await Promise.all(Object.values(MODELS).map(async m => ({ label: m.label, size: m.size, downloaded: await isDownloaded(m) }))),
+      versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
+      platform: `${process.platform} ${process.arch}`,
+    };
+  },
+  // only ever the project's own page, never a URL from the window
+  'app:openRepo': async () => shell.openExternal(repoUrl(JSON.parse(await fs.readFile(new URL('../../package.json', import.meta.url), 'utf8')))),
 
   'targets:list': async () => (await listTargets()).map(t => ({
     id: t.id,
@@ -146,6 +163,8 @@ const handlers = {
   'trace:open': (sessionId, file) => openTrace(sessionId, file),
 };
 
+const repoUrl = pkg => (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url ?? '').replace(/^git\+/, '').replace(/\.git$/, '');
+
 let traceViewer;
 let testTranscriber;
 app.on('will-quit', () => testTranscriber?.close());
@@ -194,7 +213,7 @@ app.on('will-quit', () => traceViewer?.kill());
  */
 async function openInside(p) {
   const resolved = path.resolve(p);
-  const roots = [qaHome(), fileURLToPath(new URL('../../configs/', import.meta.url))].map(r => path.resolve(r) + path.sep);
+  const roots = [qaHome(), buildsDir(), modelsDir(), fileURLToPath(new URL('../../configs/', import.meta.url))].map(r => path.resolve(r) + path.sep);
   if (!roots.some(r => resolved.startsWith(r))) throw new Error(`Not a qa-recorder file: ${p}`);
   await fs.access(resolved);
   if (process.platform === 'win32') {

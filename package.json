@@ -2,6 +2,12 @@
   "name": "qa-recorder",
   "version": "0.2.0",
   "description": "Record QA sessions of any app or website with a feedback toolbar, and hand the notes to a coding agent.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hahn-kev-bot/qa-recorder"
+  },
+  "homepage": "https://github.com/hahn-kev-bot/qa-recorder#readme",
+  "license": "MIT",
   "type": "module",
   "main": "src/gui/main.cjs",
   "bin": {
