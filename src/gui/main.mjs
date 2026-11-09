@@ -222,6 +222,8 @@ function createWindow() {
     minWidth: 820,
     minHeight: 520,
     title: 'QA Recorder',
+    // the window and taskbar icon (made from assets/icon.svg by scripts/make-icon.mjs)
+    icon: fileURLToPath(new URL(`../../assets/icon.${process.platform === 'win32' ? 'ico' : 'png'}`, import.meta.url)),
     autoHideMenuBar: true,
     webPreferences: {
       preload: fileURLToPath(new URL('./preload.cjs', import.meta.url)),

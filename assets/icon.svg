@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- QA Recorder: a feedback note with a check, and the red "recording" dot -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#334155"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+  <!-- speech bubble: the tester's note -->
+  <path d="M60 64h112a24 24 0 0 1 24 24v64a24 24 0 0 1-24 24h-58l-34 30v-30h-20a24 24 0 0 1-24-24v-64a24 24 0 0 1 24-24z" fill="#f9fafb"/>
+  <!-- check mark: QA -->
+  <path d="M84 120l24 24 44-46" fill="none" stroke="#16a34a" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- recording dot -->
+  <circle cx="192" cy="64" r="34" fill="#111827"/>
+  <circle cx="192" cy="64" r="26" fill="#ef4444"/>
+</svg>
