@@ -1,22 +1,36 @@
-# Agent notes
+# Agent instructions
 
-- Plain JavaScript, no build step. `src/core/` is the engine (Node), `src/cli.mjs` and `src/gui/` (Electron) sit on
-  top of it. `src/core/overlay.js` runs inside the page under test (no imports). The renderer (`src/gui/renderer/`) is
-  a classic script with no Node access; it reaches the core only through the IPC handlers in `src/gui/main.mjs`.
-- The core knows nothing about any particular app. App specifics go in a target config (`configs/*.json`), validated
-  by `schema/target.schema.json`. Change the schema, `AUTHORING.md` and the README's target table together.
-- Tests: `npm test` (unit), then the smoke test for what you touched: `smoke:url` (core, overlay, timeline, trace),
-  `smoke:gui` (the app), `smoke:voice` (microphone to transcript, using a WAV as the mic), `smoke:fwlite` (Windows,
-  real FW Lite build). The smokes open real windows on the desktop.
-- Speech: `src/core/speech/`. Open mic records the whole session and `chunker.mjs` cuts it into windows without ever
-  dropping speech; `voice.mjs` is push-to-talk only; `analyze.mjs` is the mic check. All three are pure and unit-tested.
-  Whisper runs in a child process. Tests share the real model cache through `QA_RECORDER_MODELS`, and
-  `QA_RECORDER_RETRANSCRIBE_MODEL` keeps re-transcription on the small model so it downloads once.
-- Writing test scripts through a shell heredoc can halve backslashes in Windows paths (`\t` becomes a tab); build
-  paths with `path.join` or write the file directly.
-- Launching Electron: strip `ELECTRON_RUN_AS_NODE` (editors set it for their terminals) and never pass a path with a
-  trailing backslash on Windows (it escapes the closing quote).
-- Targets must keep tests away from real data. FW Lite's isolation keys (`FwLiteMaui:BaseDataDir`,
-  `FwDataBridge:ProjectsFolder`, `Analytics:Enabled`, `FwLite:UpdateCheckCondition`, `LcmCrdt:ProjectPath`) come from
-  the LexBox repo; check there before adding new ones.
-- Session folders end up in front of an agent that may post to a public tracker; keep real project data out of them.
+Read [DEVELOPER.md](DEVELOPER.md) before changing code: it has the code layout, the test commands and which smoke
+test covers what, packaging, and releasing.
+
+## Rules
+
+- **Public repo.** Fixtures, screenshots, test data and commit messages use made-up content (the demo shop, the
+  fixture site). Session folders hold real testers' data: quote from them only into private replies, never into
+  commits, issues or PRs.
+- **App-agnostic core.** Behaviour for one app goes in its target (`configs/*.json`). When the target format changes,
+  update `schema/target.schema.json`, `AUTHORING.md` and the README's target table in the same change.
+- **Tests.** Run `npm test` and the smoke test for the area you touched before handing back. Smoke tests open real
+  windows on the user's desktop and each makes its own temporary data folder; point every test at a temporary
+  `QA_RECORDER_HOME`, so the user's sessions stay untouched.
+- **Screenshots.** When the toolbar or the session page looks different, rerun `node scripts/readme-screenshots.mjs`
+  and check the images before committing them.
+- **Packaging.** The installed app runs from `resources/app` with the files listed in `build.files` in
+  `package.json`. A new file the app reads at runtime goes in that list; after changing dependencies or file paths,
+  run the GUI smoke test against `npm run dist`'s output (see DEVELOPER.md).
+
+## The toolbar (`src/core/overlay.js`)
+
+It runs inside every page of the app under test, so it is a guest: a plain script with no imports, markup set through
+the `html()` Trusted Types helper, and every failure contained inside it. The page must keep working exactly as it
+would without it.
+
+## Gotchas
+
+- Launching Electron: remove `ELECTRON_RUN_AS_NODE` from the environment (editors set it for their terminals), and
+  pass paths without a trailing backslash (on Windows it escapes the closing quote).
+- Shell heredocs here can halve backslashes in Windows paths (`\t` becomes a tab). Build paths with `path.join`, or
+  write the file with an editor tool.
+- FW Lite's isolation settings (`FwLiteMaui:BaseDataDir`, `FwDataBridge:ProjectsFolder`, `Analytics:Enabled`,
+  `FwLite:UpdateCheckCondition`, `LcmCrdt:ProjectPath`) are defined in the LexBox repo; check there before adding
+  one.

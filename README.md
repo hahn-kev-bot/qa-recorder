@@ -1,82 +1,53 @@
-# qa-recorder
+# QA Recorder
 
 Record a QA session of any app or website, with a feedback toolbar injected into it, and hand the notes to a coding
-agent. Nothing is built into the thing under test: qa-recorder attaches over the Chrome DevTools protocol.
-
-```mermaid
-flowchart LR
-  T[target config<br/>JSON] --> B[build<br/>CI artifact, folder, or none]
-  B --> L[launch<br/>browser · server · WebView2 app · CDP]
-  L --> S[setup steps<br/>reach the starting state]
-  S --> R[tester + toolbar<br/>notes, screenshots, errors]
-  R --> F[session folder<br/>feedback.md · HANDOFF.md]
-  F --> A[coding agent]
-```
-
-## Screenshots
-
-The toolbar in the app under test. Drag a region (F9), pick an element (F8) or write a general note (F7), and say what
-kind of feedback it is:
+agent. Nothing is built into the thing under test: QA Recorder attaches to it over the Chrome DevTools protocol.
 
 ![The feedback toolbar on a web page, with a note being written about the selected filter buttons](docs/screenshots/toolbar.png)
 
-The session in the desktop app: each note with its screenshot, the page it was on, and the steps before it:
-
-![A finished session in the desktop app, listing three notes with screenshots](docs/screenshots/session.png)
-
-Everything the tester did, in order. The same timeline goes into the hand-off for the coding agent:
-
-![The session timeline: page loads, clicks, typing and notes, each with its time](docs/screenshots/timeline.png)
-
-The screenshots show a made-up shop. To retake them after changing the UI, run `node scripts/readme-screenshots.mjs`.
+```mermaid
+flowchart LR
+  T[target<br/>what to test] --> B[build<br/>CI artifact, folder, or none]
+  B --> L[launch<br/>browser · server · WebView2 app · CDP]
+  L --> S[setup steps<br/>reach the starting state]
+  S --> R[you + toolbar<br/>notes, screenshots, voice]
+  R --> F[session folder<br/>feedback · timeline · trace]
+  F --> A[coding agent]
+```
 
 ## Install
 
 On Windows, download `QA-Recorder-Setup-<version>.exe` from the
 [latest release](https://github.com/hahn-kev-bot/qa-recorder/releases/latest) and run it. It installs for your user
-only (no admin rights) and adds a Start menu and desktop shortcut. QA Recorder then updates itself: it checks for a
-new release when it starts, downloads it in the background, and installs it when you restart it (About page) or close
-it.
+only (no admin rights) and adds a Start menu and desktop shortcut.
 
-The installer isn't code-signed yet, so Windows SmartScreen may warn about an unknown publisher the first time:
-choose **More info**, then **Run anyway**.
+QA Recorder updates itself: it checks for a new release when it starts, downloads it in the background, and installs
+it when you restart it from the About page, or the next time you close it.
 
-To run it from source instead, or on macOS and Linux, see below.
+The installer isn't code-signed yet, so the first time Windows SmartScreen may warn about an unknown publisher: choose
+**More info**, then **Run anyway**.
 
-## Requirements
+On macOS or Linux, run it from source: see [DEVELOPER.md](DEVELOPER.md).
 
-- Node 22+ (only when running from source)
-- Chrome or Edge for website and server targets
+You also need:
+
+- Chrome or Edge, for website and server targets
 - [GitHub CLI](https://cli.github.com), logged in, for targets whose build is a GitHub Actions artifact
-- Windows for WebView2 targets such as FW Lite
 
-## Use
+## Record a session
 
-```sh
-npm install
-npm start                       # the desktop app
-```
+1. **Pick a target**, the thing you're testing, in the sidebar. To add one, choose **＋ New target** and paste a
+   URL, or see [Targets](#targets).
+2. If the target is built in CI, the app shows the newest build: **Download** it, or start with the one you have.
+3. Choose a voice mode next to **▶ Start session** (or no voice) and start. The app or website opens with the toolbar
+   in a bottom corner.
+4. Use it as you normally would, and leave a note whenever something is wrong, odd, or good.
+5. **Finish** on the toolbar (press it twice), or close the app or browser.
+6. On the session page, **Copy hand-off** and paste it to a coding agent working in the project's repo. It copies
+   `Read <session>/HANDOFF.md and follow it.`, and the agent takes it from there: it reads your notes and screenshots,
+   finds the code, and proposes fixes.
 
-In the app you pick a target, check for and download new CI builds, start a session, watch notes arrive, open the
-session's feedback, copy the hand-off line for your agent, and clean up old sessions and builds.
-
-On Windows, `qa-recorder.bat` opens the app without a terminal (and runs `npm install` the first time). Make a
-desktop shortcut to it: right-click it, Show more options, Send to, Desktop (create shortcut). To give the shortcut
-the app's icon, open its Properties, choose Change Icon and pick `assets\icon.ico`.
-
-The icon is drawn in `assets/icon.svg`; after changing it, run `node scripts/make-icon.mjs` to remake the PNG and ICO.
-
-The same things work from the command line:
-
-```sh
-node src/cli.mjs start fwlite-maui            # the latest develop build of FW Lite
-node src/cli.mjs start --url https://example.org
-node src/cli.mjs start my-app --exe path/to/local/build.exe
-node src/cli.mjs targets | sessions | builds
-node src/cli.mjs cleanup --older-than 30 [--empty]
-node src/cli.mjs validate my-target.json
-node src/cli.mjs prompt                       # the prompt for an AI to write a target
-```
+![A finished session in the desktop app, listing three notes with screenshots](docs/screenshots/session.png)
 
 ## While testing
 
@@ -85,132 +56,103 @@ node src/cli.mjs prompt                       # the prompt for an AI to write a 
 | F8 | pick an element, then write a note about it |
 | F9 | drag a region, then write a note about it |
 | F7 | a general note |
+| F6 (hold) | talk, when push-to-talk is on |
 | Esc | cancel a capture |
 
-Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and free text, and is written to disk as soon as you save
-it. ⇄ moves the toolbar to the other side. **Finish** (twice) ends the session and closes the app; closing the app or
-the browser also ends it.
+Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and your text, and is kept as soon as you save it. ⇄
+moves the toolbar to the other side.
 
-The toolbar is invisible to the page: it swallows its own clicks, keys and focus changes before the page's listeners
-run, so an open popup or menu stays open while you capture a note about it.
+The toolbar doesn't disturb the page: an open popup or menu stays open while you take a note about it.
 
-Every session also records, without you doing anything:
+Without you doing anything, every session also records:
 
-- **A timeline** of what you did, in words: "click button “Toggle filters”", "set textbox “Search” to “kettle”",
-  Enter/Escape and shortcuts, page changes, errors. Each note in feedback.md lists the steps before it; `timeline.md`
-  has the whole session. Typed values are recorded (never passwords); `capture.typedText: false` records only lengths.
-- **A Playwright trace**: screenshots whenever the screen changes, network and console, with the timeline as named
-  markers. The session page's **trace** button opens it in Playwright's Trace Viewer.
+- **A timeline** of what you did, in words ("click button “Search”", "set textbox “Search” to “kettle”"), plus page
+  changes, browser tabs and errors. Each note lists the steps before it. Typed text is recorded, passwords never are.
+- **A Playwright trace**: screenshots whenever the screen changes, network requests and console messages. The
+  session page's **trace** button opens it in Playwright's Trace Viewer.
 
-### Voice
+![The session timeline: page loads, clicks, typing and notes, each with its time](docs/screenshots/timeline.png)
 
-Pick it next to **Start session** (remembered per target). The microphone is recorded by the desktop app, and speech is
-transcribed on your machine with Whisper (base.en, downloaded once, about 80 MB, into `<data>/models`).
+## Voice
+
+Choose a mode next to **Start session**; the app remembers it per target. Speech is transcribed on your computer with
+Whisper; the model (about 80 MB) downloads the first time.
 
 | Mode | How | Result |
 |---|---|---|
-| Push-to-talk | hold F6 in the app, or hold 🎙 on its toolbar | each press becomes a 🎙 Spoken note with a screenshot from when you pressed; its audio is in `speech/NNN.wav` |
-| Open mic | talk; 🎙 on the toolbar mutes | the whole session's audio is kept (`speech/session.wav`) and all of it is transcribed, in pieces cut at your pauses; each remark goes into the timeline with a screenshot from when you started speaking, and into `transcript.md` |
+| Push-to-talk | hold F6 in the app, or hold 🎙 on its toolbar | each press becomes a 🎙 Spoken note, with a screenshot from when you pressed |
+| Open mic | just talk; 🎙 on the toolbar mutes | everything you say is transcribed and lands in the timeline, each remark with a screenshot from when you started speaking |
 
-The microphone is recorded as it is, without the browser's noise suppression, echo cancellation or auto gain (they
-muffle speech; Whisper copes with background noise better). Quiet speech is raised to a normal level before
-transcription; the saved audio stays as recorded. Voice needs the desktop app; the CLI has no microphone.
+With open mic the whole session's audio is kept, and the session page plays each remark so you can check it.
+**Re-transcribe** on a finished session runs the recording through a larger, much more accurate model (about 760 MB,
+downloaded the first time).
 
-**Microphone page** (in the sidebar): pick the microphone, watch its level, and record a 4-second test that is played
-back, transcribed, and checked for being too quiet, muffled, distorted or noisy. You don't need it before every
-session; use it once, or when a transcript looks wrong. The number that matters most is how far your voice stands out
-from the background: below about 15 dB (a laptop mic with a fan running measured 6–7 dB) transcripts fall apart, and a
-headset or a mic close to your mouth helps far more than any setting.
-
-**Re-transcribe** on a finished session runs the whole recording through Whisper large-v3-turbo (downloaded the first
-time, about 760 MB; roughly 0.4× real time) in long pieces, which is much more accurate than the live transcript. The
-session page plays each remark's audio, so you can check a transcript against what was said.
+**Microphone page** (in the sidebar): pick your microphone, watch its level, and record a 4-second test. It tells you
+if the recording is too quiet, muffled, distorted or noisy. Use it once, or when a transcript looks wrong. What
+matters most is how far your voice stands out from the background: below about 15 dB, transcripts fall apart. A
+headset, or a microphone close to your mouth, helps far more than any setting.
 
 ## Targets
 
-A target is a JSON file. Bundled ones are in `configs/`; yours are in `<data>/targets/` (an edited bundled target is
-saved there too, under the same id). The schema is `schema/target.schema.json`, so editors with JSON Schema support
-complete and check it.
-
-The smallest target:
+A target says what to test and how to start it. The smallest one is a website:
 
 ```json
 { "name": "Docs site", "launch": { "type": "browser", "url": "https://docs.example.org" } }
 ```
 
-[`configs/fwlite-maui.json`](configs/fwlite-maui.json) uses everything: a CI artifact build, a WebView2 app with
-environment variables that keep it away from real data, setup steps that open the example project, an ignore rule
-for noise in the error log, and hints for the agent.
+Make one in the app (**＋ New target**) in either of two ways:
 
-[`configs/qa-recorder.json`](configs/qa-recorder.json) is for dogfooding: it runs this checkout's desktop app with
-its own empty data folder (sharing your downloaded builds, so deleting builds there deletes yours) and records it with
-itself. QA the tool with it, then hand the session to an agent working
-in this repo.
+- **Paste a URL**, for a website.
+- **Copy AI prompt**, give the prompt to an AI, answer its questions, and paste the JSON it writes. The editor
+  checks it as you type. The prompt is [AUTHORING.md](AUTHORING.md) plus the schema.
+
+What a target can do:
 
 | Part | What it does |
 |---|---|
-| `build` | `github-actions` (repo, workflow, branch, artifact; latest successful run, cached) or `local` (a folder) |
-| `launch` | `browser` (url), `server` (start exe, wait for readyUrl, open url), `webview2` (Windows WebView2 app), `cdp` (Electron app with `--remote-debugging-port=${port}`, or attach to `cdpUrl`) |
-| `setup` | steps after attaching: `goto`, `navigate`, `click`, `fill`, `press`, `waitFor`, `waitForUrl`, `wait`, `script`; with `ifVisible`, `optional`, `timeout` |
-| `capture` | `ignore`: leave matching events out of the error log (`type`, `text`, `url`; `*` wildcard). `typedText`: false to record only lengths. `trace`: false to skip the Playwright trace |
-| `handoff` | `workspace`, `context`, `hints` for HANDOFF.md |
+| `build` | where the app comes from: `github-actions` (the latest successful CI run, downloaded and cached) or `local` (a folder) |
+| `launch` | how it starts: `browser` (a URL), `server` (start a program, wait for it, open its URL), `webview2` (a Windows WebView2 app), `cdp` (an Electron app, or any app with a debugging port) |
+| `setup` | steps to reach the starting state: `goto`, `navigate`, `click`, `fill`, `press`, `waitFor`, `waitForUrl`, `wait`, `script` |
+| `capture` | `ignore`: errors to leave out of the log. `typedText: false`: record only how much was typed. `trace: false`: no trace |
+| `handoff` | `workspace`, `context` and `hints` for the coding agent |
 
-Strings can use `${appData}` (an empty folder per session), `${sessionDir}`, `${buildDir}`, `${buildCache}`, `${port}`, `${arch}`,
-`${platform}`, `${targetDir}`, `${build.sha}`, `${build.branch}`, `${build.runId}`, `${build.url}` and `${env:NAME}`.
+Strings can use `${appData}` (an empty folder for each session), `${sessionDir}`, `${buildDir}`, `${buildCache}`,
+`${port}`, `${arch}`, `${platform}`, `${targetDir}`, `${build.sha}`, `${build.branch}`, `${build.runId}`, `${build.url}`
+and `${env:NAME}`. The full reference is [`schema/target.schema.json`](schema/target.schema.json);
+[`configs/fwlite-maui.json`](configs/fwlite-maui.json) is an example that uses nearly everything.
 
-To make a new target in the app: paste a URL, or **Copy AI prompt** ([AUTHORING.md](AUTHORING.md) plus the schema),
-give it to an AI, answer its questions, and paste the JSON it writes. The editor checks it as you type.
+Your targets are saved in the data folder. Editing a bundled target saves your copy there too, under the same id.
 
-## Data
+### FW Lite
 
-Under `%LOCALAPPDATA%\qa-recorder` (or `~/.cache/qa-recorder`; set `QA_RECORDER_HOME` to move it, or
-`QA_RECORDER_BUILDS` to move just the build cache):
+The bundled FW Lite targets give each session a fresh data folder (projects, logs, sign-in cache, WebView2 profile,
+and an empty FieldWorks projects folder), with analytics and update checks off, so testing never touches your real
+projects. FW Lite still remembers the last page it showed; builds with `--start-url`
+(sillsdev/languageforge-lexbox#2944) ignore that, and the setup steps cover older builds.
+
+## Your data
+
+Everything stays on your computer: recordings, screenshots and transcripts are never uploaded. It lives in
+`%LOCALAPPDATA%\qa-recorder` (`~/.cache/qa-recorder` on Linux and macOS); the About page shows the folders and opens
+them.
 
 | Folder | Contents |
 |---|---|
-| `sessions/<time>_<target>/` | `feedback.md`, `timeline.md`, `transcript.md` (open mic), `HANDOFF.md`, `notes/` and `speech/` screenshots and audio, `trace/` (Playwright trace chunks), `events.json` (actions, errors, navigation), `session.json`, `.app-data/` (the app's data for this session) |
-| `models/` | the speech model (`QA_RECORDER_MODELS` moves it) |
-| `builds/` | downloaded CI artifacts |
+| `sessions/` | one folder per session: `feedback.md`, `timeline.md`, `transcript.md`, `HANDOFF.md`, screenshots, audio, the trace, and the app's own data for that session |
+| `builds/` | downloaded CI builds |
+| `models/` | speech models |
 | `targets/` | your targets |
 | `profiles/` | browser profiles for targets with `"profile": "persistent"` |
 
-To hand a session off, start a coding agent in the project's repo and say `Read <session>/HANDOFF.md and follow it.`
-(the app's **Copy hand-off** button copies that line).
+**Storage and cleanup** in the sidebar deletes old sessions and builds. To keep the data somewhere else, set
+`QA_RECORDER_HOME` (everything), `QA_RECORDER_BUILDS` (just builds) or `QA_RECORDER_MODELS` (just speech models).
 
-## FW Lite notes
+## Limits
 
-Each FW Lite session gets a fresh data folder: projects, logs, auth cache, WebView2 profile, and an empty FieldWorks
-projects folder in place of the one in the registry. Analytics and update checks are off. FW Lite still saves the
-last page in MAUI preferences under your user profile; builds with `--start-url` (sillsdev/languageforge-lexbox#2944)
-ignore it at launch, and the setup's `navigate` step covers older builds.
+- Native windows and dialogs (file pickers, title bars) are outside the web page, so the toolbar can't see them.
+- The installer is Windows only; on macOS and Linux, run from source.
 
-## Test
+## Contributing
 
-```sh
-npm test               # unit tests: schema, variables, matching
-npm run check          # syntax of every source file
-npm run smoke:url      # website target end to end (opens Chrome/Edge)
-npm run smoke:gui      # the desktop app end to end (opens the app and browsers)
-npm run smoke:fwlite   # Windows: FW Lite's latest develop build end to end
-npm run smoke:dogfood  # the qa-recorder target: this app recording itself
-npm run smoke:voice    # open mic and push-to-talk, with a recorded voice as the microphone
-```
-
-The packaged app: `npm run dist` builds the installer in `dist/`, and the GUI test runs against it with
-`QA_RECORDER_EXE="dist/win-unpacked/QA Recorder.exe" npm run smoke:gui`.
-
-## Releasing
-
-```sh
-npm version minor        # or patch: bumps package.json and makes the v<version> tag
-git push --follow-tags
-```
-
-The tag starts the Release workflow (`.github/workflows/release.yml`): it runs the unit tests, builds the Windows
-installer and publishes it as a GitHub release, which installed copies pick up as an update.
-
-## Not yet
-
-- Native windows and dialogs (file pickers, title bars) are outside the web view, so the toolbar can't see them.
-- Installers for macOS and Linux (run those from a clone), and code signing.
-- rrweb replay, if the trace's frames turn out too coarse.
+[DEVELOPER.md](DEVELOPER.md) covers running from source, how the code is laid out, testing and releasing.
+QA Recorder is [MIT licensed](LICENSE).
