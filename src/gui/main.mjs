@@ -13,6 +13,7 @@ import { normalize } from '../core/speech/chunker.mjs';
 import { retranscribeSession } from '../core/speech/retranscribe.mjs';
 import { createTranscriber, isDownloaded, MODELS, modelFor, modelsDir } from '../core/speech/transcriber.mjs';
 import { cleanupSessions, deleteSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
+import { startUpdates } from './updates.mjs';
 import {
   authoringPrompt, deleteTarget, getTarget, listTargets, saveTarget, slug, targetFromUrl, validateTarget,
 } from '../core/targets.mjs';
@@ -43,6 +44,12 @@ const handlers = {
       versions: { electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node },
       platform: `${process.platform} ${process.arch}`,
     };
+  },
+  'updates:state': () => updates.state(),
+  'updates:check': () => updates.check(),
+  'updates:install': () => {
+    if (live.size) throw new Error('Finish the running session first: restarting would end it.');
+    updates.install();
   },
   // only ever the project's own page, never a URL from the window
   'app:openRepo': async () => shell.openExternal(repoUrl(JSON.parse(await fs.readFile(new URL('../../package.json', import.meta.url), 'utf8')))),
@@ -265,7 +272,10 @@ app.whenReady().then(() => {
     return serveFile(file, request.headers.get('range'));
   });
   createWindow();
+  updates = startUpdates({ app, onChange: s => send('update', s), log: m => log('updates', String(m)) });
 });
+
+let updates = { state: () => ({ status: 'idle' }), check: async () => {}, install: () => {} };
 
 // finish running sessions so their notes are written and their apps closed
 let quitting = false;

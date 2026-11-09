@@ -8,6 +8,7 @@
   },
   "homepage": "https://github.com/hahn-kev-bot/qa-recorder#readme",
   "license": "MIT",
+  "author": "Kevin Hahn",
   "type": "module",
   "main": "src/gui/main.cjs",
   "bin": {
@@ -22,7 +23,8 @@
     "smoke:gui": "node test/smoke-gui.mjs",
     "smoke:fwlite": "node test/smoke-fwlite.mjs",
     "smoke:dogfood": "node test/smoke-dogfood.mjs",
-    "smoke:voice": "node test/smoke-voice.mjs"
+    "smoke:voice": "node test/smoke-voice.mjs",
+    "dist": "electron-builder --win --publish never"
   },
   "engines": {
     "node": ">=22"
@@ -30,7 +32,58 @@
   "dependencies": {
     "@huggingface/transformers": "^4.3.2",
     "ajv": "^8.20.0",
-    "electron": "^45.2.3",
+    "electron-updater": "^6.8.11",
     "playwright-core": "^1.56.0"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "io.github.hahn-kev-bot.qa-recorder",
+    "productName": "QA Recorder",
+    "asar": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**",
+      "configs/**",
+      "!configs/qa-recorder.json",
+      "schema/**",
+      "assets/**",
+      "AUTHORING.md",
+      "README.md",
+      "LICENSE",
+      "package.json",
+      "!node_modules/onnxruntime-node/bin/napi-v*/{darwin,linux}/**",
+      "!node_modules/onnxruntime-node/bin/napi-v*/win32/arm64/**",
+      "!node_modules/onnxruntime-web/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "QA-Recorder-Setup-${version}.${ext}",
+      "shortcutName": "QA Recorder"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hahn-kev-bot",
+        "repo": "qa-recorder",
+        "releaseType": "release"
+      }
+    ]
   }
 }

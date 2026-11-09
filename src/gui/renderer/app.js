@@ -242,7 +242,7 @@ function sidebar() {
     </button>
     <button class="nav ${v.kind === 'storage' ? 'on' : ''}" data-action="go" data-kind="storage">Storage and cleanup</button>
     <button class="nav ${v.kind === 'mic' ? 'on' : ''}" data-action="go" data-kind="mic">Microphone</button>
-    <button class="nav ${v.kind === 'about' ? 'on' : ''}" data-action="go" data-kind="about">About</button>`;
+    <button class="nav ${v.kind === 'about' ? 'on' : ''}" data-action="go" data-kind="about">About${state.update?.status === 'ready' ? html` <span class="badge new">update ready</span>` : ''}</button>`;
 }
 
 function sessionsTable(sessions, { showTarget }) {
@@ -527,6 +527,22 @@ function storageView(s) {
     <div class="card"><h3>Largest sessions</h3>${sessionsTable([...s.sessions].sort((a, b) => b.size - a.size).slice(0, 15), { showTarget: true })}</div>`;
 }
 
+function updatesCard(u) {
+  if (!u) return '';
+  const check = html`<button class="btn" data-action="check-updates">Check for updates</button>`;
+  const body = {
+    dev: html`<p class="muted">Running from a source checkout: update with <span class="mono">git pull</span>. The installed app updates itself.</p>`,
+    idle: html`<p>Version ${u.current}. ${check}</p>`,
+    checking: html`<p>${spinner} Checking for a new version…</p>`,
+    current: html`<p>✓ Version ${u.current} is the newest. ${check}</p>`,
+    downloading: html`<p>${spinner} Downloading version ${u.version ?? ''}… ${u.percent ?? 0}%</p>`,
+    ready: html`<p>Version ${u.version} is downloaded. <button class="btn primary" data-action="install-update">Restart and update</button></p>
+      <p class="muted small">Otherwise it's installed the next time you close QA Recorder.</p>`,
+    error: html`<p>Couldn't check for updates: <span class="muted">${u.error}</span> ${check}</p>`,
+  }[u.status] ?? '';
+  return html`<div class="card"><h3>Updates</h3>${body}</div>`;
+}
+
 function aboutView(a) {
   if (!a) return html`<p class="muted">Loading…</p>`;
   const folder = (label, p) => html`<tr><th>${label}</th><td class="mono small">${p}</td><td><button class="btn small-btn" data-action="open" data-path="${p}">Open</button></td></tr>`;
@@ -542,6 +558,7 @@ function aboutView(a) {
         Every click, page change and error goes into the session's timeline, and <b>Copy hand-off</b> gives a coding agent everything it needs.</p>
       ${a.repo ? html`<p><button class="btn" data-action="open-repo">Source, issues and docs on GitHub</button> <span class="muted small mono">${a.repo}</span></p>` : ''}
     </div>
+    ${updatesCard(state.update)}
     <div class="card"><h3>Your data</h3>
       <table>${folder('Data folder', a.home)}${folder('Sessions', a.sessions)}${folder('Builds', a.builds)}${folder('Speech models', a.models)}</table>
       <p class="muted small">Everything stays on this computer: recordings, screenshots and transcripts are never uploaded. Speech is transcribed locally.</p>
@@ -767,6 +784,8 @@ const actions = {
     await api('shell:open', d.path);
   },
   'open-repo': () => api('app:openRepo'),
+  'check-updates': () => api('updates:check'),
+  'install-update': () => api('updates:install'),
   'delete-session': async d => {
     if (!confirm('Delete this session and its screenshots?')) return;
     await api('sessions:delete', d.id);
@@ -945,6 +964,12 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.id === 'new-url') run('from-url', {});
 });
 
+window.qa.on('update', u => {
+  const ready = u.status === 'ready' && state.update?.status !== 'ready';
+  state.update = u;
+  if (ready) toast(`QA Recorder ${u.version} is ready. Restart from the About page to use it.`);
+  render();
+});
 window.qa.on('log', ({ scope, message }) => {
   addLog(scope, message);
   // the target page shows build downloads; a session's log goes to its own page
@@ -980,6 +1005,7 @@ window.qa.on('session', async ({ id, targetId, type, data }) => {
 
 (async () => {
   state.info = await api('app:info');
+  state.update = await api('updates:state').catch(() => undefined);
   await refresh();
   const first = state.targets.find(t => t.available && !t.error);
   await go(first ? { kind: 'target', id: first.id } : { kind: 'new' });

@@ -30,9 +30,22 @@ Everything the tester did, in order. The same timeline goes into the hand-off fo
 
 The screenshots show a made-up shop. To retake them after changing the UI, run `node scripts/readme-screenshots.mjs`.
 
+## Install
+
+On Windows, download `QA-Recorder-Setup-<version>.exe` from the
+[latest release](https://github.com/hahn-kev-bot/qa-recorder/releases/latest) and run it. It installs for your user
+only (no admin rights) and adds a Start menu and desktop shortcut. QA Recorder then updates itself: it checks for a
+new release when it starts, downloads it in the background, and installs it when you restart it (About page) or close
+it.
+
+The installer isn't code-signed yet, so Windows SmartScreen may warn about an unknown publisher the first time:
+choose **More info**, then **Run anyway**.
+
+To run it from source instead, or on macOS and Linux, see below.
+
 ## Requirements
 
-- Node 22+
+- Node 22+ (only when running from source)
 - Chrome or Edge for website and server targets
 - [GitHub CLI](https://cli.github.com), logged in, for targets whose build is a GitHub Actions artifact
 - Windows for WebView2 targets such as FW Lite
@@ -183,8 +196,21 @@ npm run smoke:dogfood  # the qa-recorder target: this app recording itself
 npm run smoke:voice    # open mic and push-to-talk, with a recorded voice as the microphone
 ```
 
+The packaged app: `npm run dist` builds the installer in `dist/`, and the GUI test runs against it with
+`QA_RECORDER_EXE="dist/win-unpacked/QA Recorder.exe" npm run smoke:gui`.
+
+## Releasing
+
+```sh
+npm version minor        # or patch: bumps package.json and makes the v<version> tag
+git push --follow-tags
+```
+
+The tag starts the Release workflow (`.github/workflows/release.yml`): it runs the unit tests, builds the Windows
+installer and publishes it as a GitHub release, which installed copies pick up as an update.
+
 ## Not yet
 
 - Native windows and dialogs (file pickers, title bars) are outside the web view, so the toolbar can't see them.
-- A packaged build of the desktop app; for now run it from a clone.
+- Installers for macOS and Linux (run those from a clone), and code signing.
 - rrweb replay, if the trace's frames turn out too coarse.

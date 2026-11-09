@@ -8,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, chromium } from 'playwright-core';
 import { freePort } from '../src/core/launch.mjs';
+import { qaHome } from '../src/core/paths.mjs';
+import { fromWav } from '../src/core/speech/transcriber.mjs';
 import { serveFixture } from './fixtures/server.mjs';
 
 // editors built on Electron set ELECTRON_RUN_AS_NODE for their terminals; it would start Electron as plain Node
@@ -25,10 +27,13 @@ await fs.writeFile(path.join(fakeBuild, 'qa-recorder-build.json'), JSON.stringif
   source: 'github-actions', repo: 'sillsdev/languageforge-lexbox', artifact: 'fw-lite-portable', runId: '1',
   sha: 'fake01aaaa', title: 'Fake download', createdAt: new Date().toISOString(),
 }));
+// QA_RECORDER_EXE: test the packaged app (npm run dist, then dist/win-unpacked/QA Recorder.exe) instead of the checkout
+const packaged = process.env.QA_RECORDER_EXE;
 const electronApp = await _electron.launch({
-  executablePath: createRequire(import.meta.url)('electron'),
-  args: [path.resolve(fileURLToPath(new URL('..', import.meta.url)))], // no trailing slash: it would escape the closing quote
-  env: { ...withoutRunAsNode(), QA_RECORDER_HOME: home, QA_RECORDER_NO_BROWSER: '1' },
+  executablePath: packaged ?? createRequire(import.meta.url)('electron'),
+  args: packaged ? [] : [path.resolve(fileURLToPath(new URL('..', import.meta.url)))], // no trailing slash: it would escape the closing quote
+  // the speech model is shared with your real data folder so it downloads at most once
+  env: { ...withoutRunAsNode(), QA_RECORDER_HOME: home, QA_RECORDER_MODELS: path.join(qaHome(), 'models'), QA_RECORDER_NO_BROWSER: '1' },
 });
 const win = await electronApp.firstWindow();
 win.on('console', m => { if (m.type() === 'error') console.log('[window]', m.text()); });
@@ -146,7 +151,15 @@ await main.getByText(`Version ${version}`).waitFor();
 await main.getByRole('button', { name: 'Source, issues and docs on GitHub' }).waitFor();
 assert.ok((await main.textContent()).includes(home), 'shows the data folder');
 await win.waitForFunction(() => document.querySelector('.about-head img')?.naturalWidth > 0, null, { timeout: 5000 });
+// updates: the checkout says to use git; the installed app checks GitHub releases
+if (packaged) await main.locator('.card', { hasText: 'Updates' }).getByText(/Checking|newest|Downloading|downloaded|Couldn't check/).waitFor({ timeout: 30_000 });
+else await main.getByText('Running from a source checkout').waitFor();
 await win.screenshot({ path: path.join(home, 'about.png') });
+
+// speech: the transcriber runs in its own process (in the installed app too) and hears the fixture's words
+const speech = Array.from(fromWav(await fs.readFile(new URL('./fixtures/speech.wav', import.meta.url))));
+const heard = await win.evaluate(s => window.qa.invoke('mic:test', Float32Array.from(s)), speech);
+assert.match(heard.text, /search|button|filter|remember/i, `transcribed: ${heard.text}`);
 
 assert.deepEqual(pageErrors.map(String), [], 'the window had no uncaught errors');
 await electronApp.close();
