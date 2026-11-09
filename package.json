@@ -1,6 +1,6 @@
 {
   "name": "qa-recorder",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Record QA sessions of any app or website with a feedback toolbar, and hand the notes to a coding agent.",
   "repository": {
     "type": "git",
