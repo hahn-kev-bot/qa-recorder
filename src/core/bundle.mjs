@@ -256,41 +256,69 @@ const firstLine = s => (s ?? '').split('\n')[0].slice(0, 100);
 const noteTitle = n => (n.transcribing ? '(transcribing…)' : firstLine(n.text) || '(no text)');
 const oneLine = s => s.replace(/\s+/g, ' ').slice(0, 300);
 
-/** The prompt a coding agent gets. It decides with the tester how to split the work. */
+/**
+ * The prompt a coding agent gets. Four steps, each ending on a "done when"; step 3 is a hard stop, because the
+ * tester decides what gets changed. Written with the writing-for-agents guidance: the plan's shape is fixed (one row
+ * per note) so every run accounts for every note the same way.
+ */
 function handoffPrompt(session, sessionDir, { speech }) {
   const { workspace, hints } = session.handoff ?? {};
   const build = buildLine(session.build);
-  return `# QA session handoff
+  const sha = session.build?.sha && session.build.sha !== 'local' ? session.build.sha : undefined;
+  const remarks = speech ? ' and spoken remark' : '';
+  return `# QA session hand-off
 
-You are picking up feedback from a manual QA session of **${session.target.name}**.
-${workspace ? `Work in \`${workspace}\` and follow its AGENTS.md / CLAUDE.md files if it has them.` : 'Ask the tester which repo or folder holds the code if you are not already in it.'}
+A tester ran a manual QA session of **${session.target.name}** and left feedback for you to act on.
+${workspace ? `Work in \`${workspace}\`.` : "If you aren't already in the repo that holds this app's code, ask the tester where it is."}
 
-- Session folder: \`${sessionDir}\`
-- Feedback: \`feedback.md\` in that folder (read the screenshots it links, they are part of the feedback)
+- Session folder: \`${sessionDir}\`. The files below are in it.
 ${build ? `- Build tested: ${build}\n` : ''}
-## Steps
+## 1. Read
 
-1. Read \`feedback.md\` and every screenshot it links. Each note lists the steps the tester took before it; the
-   whole session (clicks, typing, page changes${speech ? ', what the tester said' : ''}, errors) is in \`timeline.md\`${speech ? `, and the
-   spoken commentary on its own is in \`transcript.md\`. Spoken remarks are feedback too, even when no note was saved;
-   transcripts can mishear words, so when a remark doesn't make sense, ask the tester rather than guess` : ''}.
-   \`events.json\` has the raw log.
-2. For each note, find the code involved: search for the target element's text, aria-label, placeholder or data
-   attributes. Notes marked 👍 Like are things to keep; don't change those.
-3. Check whether the code has changed since the build that was tested, and say if a note looks already fixed.
-4. Size each note and propose a plan to the tester before you change anything:
-   - **Small and clear** (copy, styling, an obvious bug): fix it. Group related small fixes into one branch/PR.
-   - **Medium**: propose the fix and ask before starting.
-   - **Large, risky or unclear** (a design question, data or sync code): draft an issue instead, and show the draft to
-     the tester before filing.
-   - Ask the tester when a note is ambiguous rather than guessing what they meant.
-5. Agree on the plan with the tester, then carry it out.
-${hints ? `\n## About this project\n\n${hints.trim()}\n` : ''}
-## Rules
+Read \`feedback.md\` and open every screenshot it links: the screenshots are part of the feedback. Each note lists
+the steps the tester took before it. \`timeline.md\` has the whole session in order (clicks, typing, page changes,
+browser tabs${speech ? ', what the tester said' : ''}, errors), and \`events.json\` the raw log.
+${speech ? `
+\`transcript.md\` has the tester's spoken commentary. Spoken remarks are feedback too, even where no note was saved.
+Transcription can mishear words: when a remark doesn't make sense, mark it for the tester to clarify.
+` : ''}
+Logged errors are leads, not tasks. An error listed under a note may explain that note; errors elsewhere go in the
+plan as possible bugs for the tester to judge (some come from the browser or the network, not the app).
 
-- Issue trackers are often public. Show the tester any screenshot or text before it goes into an issue or PR.
-- Don't commit, push or open PRs without the tester's go-ahead.
-`;
+**Done when** you can say, for every note${remarks}, what the tester saw and what they want.
+
+## 2. Locate
+
+For each note, find the code behind it: search for the target element's text, aria-label, placeholder or data
+attributes, which are listed under the note.${sha ? ` Then \`git log --oneline ${sha}..HEAD -- <files>\` shows whether that code
+changed since the tested build; mark notes that look already fixed.` : ''}
+
+**Done when** every note has its files, or says the code wasn't found.
+
+## 3. Triage, then stop
+
+Present the plan to the tester as a table with one row per note${speech ? ' and per spoken remark that asks for something' : ''}, every
+one of them. Notes about the same problem share a row.
+
+| Note | What the tester wants | Size | Proposal | Files |
+|---|---|---|---|---|
+
+- **Keep**: a 👍 Like. The behaviour it praises stays as it is.
+- **Small**: clear and contained (wording, styling, an obvious bug). Propose the fix; related small fixes share a
+  branch.
+- **Medium**: clear, but needs a design choice or touches several places. Propose the fix you would make.
+- **Large**: risky or open-ended, or it touches data or sync code. Propose an issue, and draft it.
+- **Unclear**: ask the question that would settle it.
+
+Then stop. The tester approves, changes or drops each row before you edit anything.
+
+## 4. Carry out
+
+Do what the tester approved, and nothing more.
+
+Show the tester every screenshot and every piece of session text before it goes into an issue, PR or commit message:
+trackers are often public, and sessions hold real data. Commit, push and open PRs when the tester says so.
+${hints ? `\n## About this project\n\n${hints.trim()}\n` : ''}`;
 }
 
 function describeEvent(e) {

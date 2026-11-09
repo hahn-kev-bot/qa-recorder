@@ -102,6 +102,9 @@ assert.match(md, /Menu items need icons/);
 const handoff = await fs.readFile(path.join(session.dir, 'HANDOFF.md'), 'utf8');
 assert.match(handoff, /Work in `the fixture repo`/);
 assert.match(handoff, /The site is test\/fixtures\/site\./);
+// the agent proposes and waits: the tester decides what changes
+assert.match(handoff, /## 3\. Triage, then stop[\s\S]*Then stop\. The tester approves/);
+assert.match(handoff, /\| Note \| What the tester wants \| Size \| Proposal \| Files \|/);
 const saved = JSON.parse(await fs.readFile(path.join(session.dir, 'session.json'), 'utf8'));
 assert.equal(saved.status, 'ended');
 assert.equal(saved.notes, 2);

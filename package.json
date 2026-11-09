@@ -82,7 +82,7 @@
         "provider": "github",
         "owner": "hahn-kev-bot",
         "repo": "qa-recorder",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ]
   }
