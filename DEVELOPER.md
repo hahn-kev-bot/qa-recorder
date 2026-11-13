@@ -88,6 +88,9 @@ npm run smoke:dogfood  # the qa-recorder target: this app recording itself
 The smoke tests open real windows on your desktop, and each uses a throwaway data folder. To save downloads, the
 speech tests share your real model folder.
 
+CI (`.github/workflows/test.yml`) runs the unit tests, the syntax check, `smoke:url` and `smoke:gui` on Windows for
+every pull request and every push to main.
+
 ## Dogfooding
 
 The **QA Recorder (this app)** target runs this checkout's app with its own empty data folder and records it with
