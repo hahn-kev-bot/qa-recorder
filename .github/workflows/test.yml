@@ -1,0 +1,62 @@
+# Tests every pull request and every push to main: unit tests and the syntax check, then the website and desktop app
+# smoke tests, which open real windows (the Windows runners have a desktop, Chrome and Edge).
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Syntax check
+        run: npm run check
+
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # smoke:gui transcribes with the fast Whisper model (77 MB); it shares the real data folder's models
+      - name: Cache the speech model
+        uses: actions/cache@v6
+        with:
+          path: ~\AppData\Local\qa-recorder\models
+          key: whisper-models-${{ hashFiles('src/core/speech/transcriber.mjs') }}
+          restore-keys: whisper-models-
+
+      - name: Website smoke test
+        run: npm run smoke:url
+
+      - name: Desktop app smoke test
+        run: npm run smoke:gui

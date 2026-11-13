@@ -95,7 +95,8 @@ assert.equal(notes[1].kind, 'idea');
 assert.equal(notes[1].target.attrs.placeholder, 'Find a product');
 assert.ok(events.some(e => e.type === 'console.error' && e.text.includes('search backend unavailable')), 'console error from setup recorded');
 assert.ok(events.some(e => e.type === 'http' && e.url.endsWith('/missing.png')), '404 recorded');
-assert.ok(!events.some(e => e.url?.endsWith('/favicon.ico')), 'favicon ignored by the capture rule');
+// the rule is for HTTP errors only: some browsers also log the 404 to the console, which the rule leaves in
+assert.ok(!events.some(e => e.type === 'http' && e.url?.endsWith('/favicon.ico')), 'favicon ignored by the capture rule');
 const md = await fs.readFile(path.join(session.dir, 'feedback.md'), 'utf8');
 assert.match(md, /# QA session: Fixture shop/);
 assert.match(md, /Menu items need icons/);
