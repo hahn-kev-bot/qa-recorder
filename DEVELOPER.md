@@ -61,10 +61,12 @@ flowchart TB
 | `src/core/launch.mjs` | the launch types: `browser`, `server`, `webview2`, `cdp` |
 | `src/core/targets.mjs` | loading, validating and saving targets; `${vars}`; the AI authoring prompt |
 | `src/core/builds.mjs` | finding and downloading CI artifacts through `gh` |
+| `src/core/zip.mjs` | a streaming zip writer, for exporting a session (`exportSession` in `sessions.mjs`) |
 | `src/core/bundle.mjs` | the files an agent reads: `feedback.md`, `timeline.md`, `transcript.md`, `HANDOFF.md` |
 | `src/core/speech/` | microphone to text. Whisper runs in a child process (`worker.mjs`). `chunker.mjs` cuts open-mic audio into windows without ever dropping speech; `voice.mjs` is push-to-talk; `analyze.mjs` is the mic check |
 | `src/gui/main.mjs` | the Electron main process: one IPC handler per thing the window can do |
 | `src/gui/renderer/` | the window. A classic script that reaches the core only through `window.qa.invoke` |
+| `src/gui/share.mjs` | the system share sheet. Electron has no Web Share API, so on Windows `share-windows.ps1` opens it through `DataTransferManager` in Windows PowerShell; on macOS it uses `ShareMenu` |
 | `src/gui/updates.mjs` | self-update from GitHub Releases (installed app only) |
 | `configs/` | bundled targets. `qa-recorder.json` is this app recording itself (see [Dogfooding](#dogfooding)) |
 | `schema/target.schema.json`, `AUTHORING.md` | the target format, and the guide an AI follows to write a target |
@@ -77,7 +79,7 @@ The core knows nothing about any particular app: app specifics belong in a targe
 npm test               # unit tests
 npm run check          # syntax of every source file
 npm run smoke:url      # a website target end to end: toolbar, notes, timeline, tabs, trace
-npm run smoke:gui      # the desktop app end to end, including the About page and a transcription
+npm run smoke:gui      # the desktop app end to end, including export, the About page and a transcription
 npm run smoke:voice    # open mic and push-to-talk, with test/fixtures/speech.wav as the microphone
 npm run smoke:fwlite   # Windows: FW Lite's latest develop build end to end
 npm run smoke:dogfood  # the qa-recorder target: this app recording itself

@@ -130,6 +130,31 @@ const viewer = await win.locator('#toast').getByText(/^Trace Viewer: http/).text
 const viewerUrl = viewer.replace('Trace Viewer: ', '');
 assert.equal((await fetch(viewerUrl)).status, 200, 'the trace viewer serves');
 
+// export: zip the session and save it (the save dialog is stubbed: tests can't click a native dialog)
+const saved = path.join(home, 'exported.zip');
+await electronApp.evaluate(({ dialog }, file) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: file }); }, saved);
+await main.getByRole('button', { name: 'Export…' }).click();
+const exportDialog = win.locator('dialog#export');
+await exportDialog.getByText(/\.zip · /).waitFor({ timeout: 30_000 });
+await win.screenshot({ path: path.join(home, 'export.png') });
+await exportDialog.getByRole('button', { name: 'Save as…' }).click();
+await win.locator('#toast').getByText(`Saved ${saved}`).waitFor();
+assert.equal(await exportDialog.isVisible(), false, 'the dialog closes after saving');
+// Windows' own unzip (.NET's ZipArchive) reads it
+const unzipped = path.join(home, 'unzipped');
+const { execFileSync } = await import('node:child_process');
+if (process.platform === 'win32') {
+  execFileSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${saved}' -DestinationPath '${unzipped}'`]);
+  const [folder] = await fs.readdir(unzipped);
+  assert.match(folder, /fixture-cdp$/, 'the zip holds the session folder');
+  const files = await fs.readdir(path.join(unzipped, folder), { recursive: true });
+  for (const f of ['feedback.md', 'timeline.md', 'notes.json', 'session.json']) assert.ok(files.includes(f), `the zip has ${f}`);
+  assert.ok(files.some(f => /\.png$/.test(f)), 'the zip has the screenshot');
+  const portable = await fs.readFile(path.join(unzipped, folder, 'HANDOFF.md'), 'utf8');
+  assert.match(portable, /Session folder: the folder this file is in\./);
+  assert.ok(!portable.includes(home), 'the exported hand-off has no path from this computer');
+}
+
 // --- the sessions list and cleanup
 await nav('All sessions').click();
 await main.locator('tr.clickable').nth(1).waitFor();

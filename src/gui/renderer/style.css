@@ -60,6 +60,12 @@ pre.log { background: var(--code); border-radius: 6px; padding: 10px 12px; max-h
 .note .body { padding: 10px 12px; }
 .note .text { white-space: pre-wrap; margin: 4px 0; }
 details summary { cursor: pointer; }
+dialog#export { width: 440px; max-width: calc(100vw - 32px); border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); color: var(--fg); padding: 16px 18px; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+dialog#export::backdrop { background: rgba(0,0,0,.35); }
+dialog#export h2 { margin: 0 0 8px; font-size: 16px; }
+dialog#export .progress { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin: 10px 0 14px; }
+dialog#export .progress > div { height: 100%; background: var(--accent); transition: width .15s; }
+dialog#export .grow { flex: 1; }
 #toast { position: fixed; bottom: 16px; right: 16px; max-width: 520px; background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 8px; white-space: pre-wrap; box-shadow: 0 4px 18px rgba(0,0,0,.25); }
 #toast.error { background: var(--danger); color: #fff; }
 .zoom { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: flex; align-items: center; justify-content: center; cursor: zoom-out; z-index: 10; }

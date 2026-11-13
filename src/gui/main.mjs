@@ -1,5 +1,5 @@
 // Electron main process: owns the core (builds, sessions, Playwright) and serves it to the window over IPC.
-import { app, BrowserWindow, clipboard, ipcMain, protocol, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, shell } from 'electron';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -12,7 +12,8 @@ import { analyzeAudio } from '../core/speech/analyze.mjs';
 import { normalize } from '../core/speech/chunker.mjs';
 import { retranscribeSession } from '../core/speech/retranscribe.mjs';
 import { createTranscriber, isDownloaded, MODELS, modelFor, modelsDir } from '../core/speech/transcriber.mjs';
-import { cleanupSessions, deleteSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
+import { cleanupSessions, deleteSession, exportSession, getSession, listSessions, storageSummary } from '../core/sessions.mjs';
+import { canShare, shareFile } from './share.mjs';
 import { startUpdates } from './updates.mjs';
 import {
   authoringPrompt, deleteTarget, getTarget, listTargets, saveTarget, slug, targetFromUrl, validateTarget,
@@ -138,6 +139,51 @@ const handlers = {
     return text;
   },
 
+  // Export: start zips the session to a temp folder while the window asks where it goes; share and save wait for it
+  'export:canShare': () => canShare(),
+  'export:start': async id => {
+    if (live.has(id)) throw new Error('Finish the session before exporting it.');
+    await fs.mkdir(exportsDir(), { recursive: true });
+    const dir = await fs.mkdtemp(path.join(exportsDir(), 'x-'));
+    const file = path.join(dir, `${id}.zip`);
+    let last = 0;
+    const onProgress = (done, total) => {
+      if (Date.now() - last < 150 && done < total) return;
+      last = Date.now();
+      send('session', { id, type: 'export', data: { done, total } });
+    };
+    const job = { file, shared: false, done: exportSession(id, file, { onProgress }) };
+    exports.set(id, job);
+    job.done.catch(() => exports.get(id) === job && exports.delete(id));
+    await job.done;
+    return { name: path.basename(file), size: (await fs.stat(file)).size };
+  },
+  'export:save': async id => {
+    const job = await exportJob(id);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Save the session',
+      defaultPath: path.join(app.getPath('downloads'), path.basename(job.file)),
+      filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+    });
+    if (canceled || !filePath) return undefined;
+    await fs.copyFile(job.file, filePath);
+    return filePath;
+  },
+  'export:share': async id => {
+    const job = await exportJob(id);
+    job.shared = true;
+    const { session } = await getSession(id);
+    return shareFile(win, job.file, { title: `QA session: ${session.target.name}` });
+  },
+  // the window closed the export: drop the zip, unless it was shared (the app it went to may still be reading it)
+  'export:discard': async id => {
+    const job = exports.get(id);
+    if (!job) return;
+    exports.delete(id);
+    await job.done.catch(() => {});
+    if (!job.shared) await fs.rm(path.dirname(job.file), { recursive: true, force: true });
+  },
+
   'sessions:retranscribe': async id => {
     if (live.has(id)) throw new Error('Finish the session first.');
     const { session } = await getSession(id);
@@ -171,6 +217,25 @@ const handlers = {
 };
 
 const repoUrl = pkg => (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url ?? '').replace(/^git\+/, '').replace(/\.git$/, '');
+
+/** Zips being exported, by session id: { file, shared, done }. */
+const exports = new Map();
+const exportsDir = () => path.join(app.getPath('temp'), 'qa-recorder-export');
+async function exportJob(id) {
+  const job = exports.get(id);
+  if (!job) throw new Error('Export the session again.');
+  await job.done;
+  return job;
+}
+/** Zips from earlier runs: shared ones are kept a day for the app they went to, then removed. */
+async function pruneExports() {
+  await fs.mkdir(exportsDir(), { recursive: true });
+  for (const name of await fs.readdir(exportsDir())) {
+    const dir = path.join(exportsDir(), name);
+    const { mtimeMs } = await fs.stat(dir).catch(() => ({ mtimeMs: Date.now() }));
+    if (Date.now() - mtimeMs > 86_400_000) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
 
 let traceViewer;
 let testTranscriber;
@@ -272,6 +337,7 @@ app.whenReady().then(() => {
     return serveFile(file, request.headers.get('range'));
   });
   createWindow();
+  pruneExports().catch(e => log('export', `Couldn't clear old exports: ${e.message}`));
   updates = startUpdates({ app, onChange: s => send('update', s), log: m => log('updates', String(m)) });
 });
 

@@ -261,6 +261,11 @@ const oneLine = s => s.replace(/\s+/g, ' ').slice(0, 300);
  * tester decides what gets changed. Written with the writing-for-agents guidance: the plan's shape is fixed (one row
  * per note) so every run accounts for every note the same way.
  */
+const folderLine = dir => (dir ? `- Session folder: \`${dir}\`. The files below are in it.` : '- Session folder: the folder this file is in.');
+
+/** HANDOFF.md for a copy of the session somewhere else: it points at its own folder instead of the original. */
+export const portableHandoff = (text, sessionDir) => text.replace(folderLine(sessionDir), folderLine());
+
 function handoffPrompt(session, sessionDir, { speech }) {
   const { workspace, hints } = session.handoff ?? {};
   const build = buildLine(session.build);
@@ -271,7 +276,7 @@ function handoffPrompt(session, sessionDir, { speech }) {
 A tester ran a manual QA session of **${session.target.name}** and left feedback for you to act on.
 ${workspace ? `Work in \`${workspace}\`.` : "If you aren't already in the repo that holds this app's code, ask the tester where it is."}
 
-- Session folder: \`${sessionDir}\`. The files below are in it.
+${folderLine(sessionDir)}
 ${build ? `- Build tested: ${build}\n` : ''}
 ## 1. Read
 

@@ -205,6 +205,71 @@ function addLog(scope, line) {
   if (state.logs[scope].length > 300) state.logs[scope].shift();
 }
 
+// ---------- export ----------
+// A dialog outside #main, so page re-renders leave it alone. The zip is made as soon as it opens; Share and Save as
+// work straight away and wait for the zip in the main process.
+
+let exporting; // { id, done, total, ready, name, size, error, working, message }
+const exportDialog = () => document.getElementById('export');
+
+function renderExport() {
+  const x = exporting;
+  if (!x) return;
+  const pct = x.ready ? 100 : x.total ? Math.floor((100 * x.done) / x.total) : 0;
+  const off = x.error || x.working ? raw('disabled') : '';
+  exportDialog().innerHTML = html`
+    <h2 id="export-title">Export session</h2>
+    <p class="muted small">A zip of the whole session folder, with everything recorded, to send to someone else.</p>
+    ${x.error ? html`<p class="errors">${x.error}</p>` : html`
+      <div class="progress" role="progressbar" aria-label="Zipping" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div style="width: ${pct}%"></div></div>
+      <p class="small">${x.ready ? html`<span class="mono">${x.name}</span> · ${mb(x.size)}` : html`${spinner} Zipping… <span id="export-pct">${pct}</span>%`}</p>`}
+    ${x.working ? html`<p class="muted small">${spinner} ${x.ready ? x.working : 'Waiting for the zip…'}</p>` : ''}
+    ${x.message ? html`<p class="errors">${x.message}</p>` : ''}
+    <div class="row">
+      ${state.canShare ? html`<button class="btn primary" data-action="export-share" ${off}>Share…</button>` : ''}
+      <button class="btn ${state.canShare ? '' : 'primary'}" data-action="export-save" ${off}>Save as…</button>
+      <span class="grow"></span>
+      <button class="btn" data-action="export-close">Close</button>
+    </div>`.s;
+}
+
+/**
+ * Progress while zipping: moves the bar and the number in place. Rebuilding the dialog would restart the spinner's
+ * animation on every update.
+ */
+function updateExportProgress() {
+  const x = exporting;
+  const pctEl = document.getElementById('export-pct');
+  if (!pctEl) return renderExport();
+  const pct = x.total ? Math.floor((100 * x.done) / x.total) : 0;
+  pctEl.textContent = pct;
+  const bar = exportDialog().querySelector('.progress');
+  bar.setAttribute('aria-valuenow', pct);
+  bar.firstElementChild.style.width = `${pct}%`;
+}
+
+/** Runs Share or Save as, showing what it waits on and any failure inside the dialog. */
+async function exportStep(working, fn) {
+  const x = exporting;
+  if (!x || x.working || x.error) return;
+  Object.assign(x, { working, message: undefined });
+  renderExport();
+  try {
+    await fn(x);
+  } catch (e) {
+    x.message = cleanError(e);
+  } finally {
+    x.working = undefined;
+    renderExport();
+  }
+}
+
+exportDialog().addEventListener('close', () => {
+  const x = exporting;
+  exporting = undefined;
+  if (x) void window.qa.invoke('export:discard', x.id);
+});
+
 // ---------- data ----------
 
 async function refresh() {
@@ -328,6 +393,7 @@ function sessionView(s, detail) {
       </div>
       ${live ? html`<button class="btn primary" data-action="finish" data-id="${s.id}">Finish session</button>` : ''}
       <button class="btn" data-action="handoff" data-id="${s.id}" ${notes.length || detail?.speech?.length ? '' : raw('disabled')} title="Copies: Read …/HANDOFF.md and follow it.">Copy hand-off</button>
+      ${live ? '' : html`<button class="btn" data-action="export" data-id="${s.id}" title="Zip the session folder to send to someone">Export…</button>`}
       ${live ? '' : html`<button class="btn danger" data-action="delete-session" data-id="${s.id}">Delete</button>`}
     </div>
     <div class="path muted small mono" title="${s.dir}">${s.dir}</div>
@@ -786,6 +852,34 @@ const actions = {
   'open-repo': () => api('app:openRepo'),
   'check-updates': () => api('updates:check'),
   'install-update': () => api('updates:install'),
+  export: async d => {
+    if (exporting) return;
+    state.canShare ??= await api('export:canShare');
+    const x = { id: d.id, done: 0, total: 0 };
+    exporting = x;
+    renderExport();
+    exportDialog().showModal();
+    try {
+      Object.assign(x, await window.qa.invoke('export:start', d.id), { ready: true });
+    } catch (e) {
+      x.error = cleanError(e);
+    }
+    renderExport();
+  },
+  'export-share': () => exportStep('Opening the share sheet…', async x => {
+    const how = await window.qa.invoke('export:share', x.id);
+    if (how === 'completed') {
+      exportDialog().close();
+      toast('Session shared.');
+    }
+  }),
+  'export-save': () => exportStep('Choosing where to save…', async x => {
+    const file = await window.qa.invoke('export:save', x.id);
+    if (!file) return;
+    exportDialog().close();
+    toast(`Saved ${file}`);
+  }),
+  'export-close': () => exportDialog().close(),
   'delete-session': async d => {
     if (!confirm('Delete this session and its screenshots?')) return;
     await api('sessions:delete', d.id);
@@ -977,6 +1071,13 @@ window.qa.on('log', ({ scope, message }) => {
   if ((v.kind === 'target' && v.id === scope) || (v.kind === 'session' && v.id === scope)) render();
 });
 window.qa.on('session', async ({ id, targetId, type, data }) => {
+  if (type === 'export') {
+    if (exporting?.id === id && !exporting.ready) {
+      Object.assign(exporting, data);
+      updateExportProgress();
+    }
+    return;
+  }
   if (type === 'retranscribe') {
     state.retranscribeStatus = data;
     if (state.view.kind === 'session' && state.view.id === id) render();
