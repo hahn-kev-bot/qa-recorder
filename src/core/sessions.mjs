@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { listBuilds } from './builds.mjs';
-import { stepsBefore, timelineRows } from './bundle.mjs';
+import { portableHandoff, stepsBefore, timelineRows } from './bundle.mjs';
 import { dirSize } from './fsutil.mjs';
 import { sessionsDir } from './paths.mjs';
+import { writeZip } from './zip.mjs';
 
 const inSessions = id => {
   const dir = path.resolve(sessionsDir(), id);
@@ -53,6 +54,24 @@ export async function getSession(id) {
 
 export async function deleteSession(id) {
   await fs.rm(inSessions(id), { recursive: true, force: true });
+}
+
+/**
+ * Zips a session folder to outFile, inside a folder named after the session, for sending to someone else.
+ * HANDOFF.md in the zip points at its own folder, since the original path means nothing on another computer.
+ */
+export async function exportSession(id, outFile, { onProgress } = {}) {
+  const dir = inSessions(id);
+  const files = (await fs.readdir(dir, { recursive: true, withFileTypes: true })).filter(e => e.isFile());
+  if (!files.length) throw new Error(`No session ${id}`);
+  const entries = await Promise.all(files.map(async e => {
+    const file = path.join(e.parentPath, e.name);
+    const rel = path.relative(dir, file).split(path.sep).join('/');
+    const name = `${id}/${rel}`;
+    if (rel !== 'HANDOFF.md') return { name, file };
+    return { name, data: portableHandoff(await fs.readFile(file, 'utf8'), dir) };
+  }));
+  await writeZip(outFile, entries.sort((a, b) => a.name.localeCompare(b.name)), { onProgress });
 }
 
 /** Deletes ended sessions older than the cutoff (optionally only those without notes). Returns the ids deleted. */

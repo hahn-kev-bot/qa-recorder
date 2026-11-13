@@ -47,6 +47,10 @@ You also need:
    `Read <session>/HANDOFF.md and follow it.`, and the agent takes it from there: it reads your notes and screenshots,
    finds the code, and proposes fixes.
 
+   To send the session to someone else, choose **Export…**. It zips the session folder, and you can **Share…** it
+   (the Windows or macOS share sheet: email, Teams, nearby sharing…) or **Save as…** a file. The person who gets it
+   unzips it and gives `HANDOFF.md` to their coding agent the same way.
+
 ![A finished session in the desktop app, listing three notes with screenshots](docs/screenshots/session.png)
 
 ## While testing
