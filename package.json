@@ -20,6 +20,7 @@
     "test": "node --test test/unit/*.test.mjs",
     "check": "node test/check.mjs",
     "smoke:url": "node test/smoke-url.mjs",
+    "smoke:design": "node test/smoke-design.mjs",
     "smoke:gui": "node test/smoke-gui.mjs",
     "smoke:fwlite": "node test/smoke-fwlite.mjs",
     "smoke:dogfood": "node test/smoke-dogfood.mjs",

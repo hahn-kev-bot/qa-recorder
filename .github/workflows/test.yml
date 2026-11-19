@@ -58,5 +58,8 @@ jobs:
       - name: Website smoke test
         run: npm run smoke:url
 
+      - name: Design tools smoke test
+        run: npm run smoke:design
+
       - name: Desktop app smoke test
         run: npm run smoke:gui

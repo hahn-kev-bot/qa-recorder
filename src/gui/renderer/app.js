@@ -2,7 +2,7 @@
 // Every button has data-action; one click listener dispatches to `actions`.
 'use strict';
 
-const KIND = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken' };
+const KIND = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken', move: '✥ Move', resize: '⤡ Resize' };
 const VOICE_OPTIONS = [['off', '🔇 No voice'], ['push-to-talk', '🎙 Push-to-talk (F6)'], ['open-mic', '🎙 Open mic']];
 
 /** The voice choice is remembered per target. localStorage can be unavailable; then it is just not remembered. */
@@ -508,13 +508,20 @@ function noteCard(sessionId, n) {
     <div class="body">
       <div class="row" style="justify-content:space-between"><b>${n.id}. ${KIND[n.kind] ?? n.kind}</b>
         <span class="row" style="gap:6px">${playButton(sessionId, n.audio)}<span class="muted small">${new Date(n.at).toLocaleTimeString()}</span></span></div>
-      <div class="text">${n.transcribing ? html`${spinner} transcribing…` : n.text || '(no text)'}</div>
+      ${n.change ? html`<div class="muted small">${designSummary(n.change)}</div>` : ''}
+      <div class="text">${n.transcribing ? html`${spinner} transcribing…` : n.text || (n.change ? '' : '(no text)')}</div>
       <div class="muted small mono">${shortUrl(n.url)}</div>
       ${t ? html`<div class="muted small">on <code>${t.tag}</code>${t.text ? html` “${t.text.slice(0, 60)}”` : ''}${t.attrs?.['aria-label'] ? html` [${t.attrs['aria-label']}]` : ''}</div>` : ''}
       ${n.steps?.length ? html`<details class="steps"><summary class="muted small">${n.steps.length} step${n.steps.length === 1 ? '' : 's'} before this note</summary>
         <ol class="small">${n.steps.slice(-10).map(step => html`<li>${step}</li>`)}</ol></details>` : ''}
     </div>
   </div>`;
+}
+
+/** A Move or Resize note's change, in a few words; bundle.mjs has the long form. */
+function designSummary(c) {
+  if (c.tool === 'move') return `moved ${Math.abs(c.dx)}px ${c.dx < 0 ? 'left' : 'right'}, ${Math.abs(c.dy)}px ${c.dy < 0 ? 'up' : 'down'}`;
+  return `resized ${c.before.width}×${c.before.height} → ${c.after.width}×${c.after.height}`;
 }
 
 function shortUrl(url) {

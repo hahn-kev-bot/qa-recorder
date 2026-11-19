@@ -209,6 +209,12 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, over
     onAction(record('action', action, source));
   });
   await context.exposeBinding('__qaRecorderTabShown', ({ page: source }) => show(source));
+  // a design change (Move, Resize): the page as it was, shot just before its note; the note's id isn't known yet
+  const pendingBefore = { full: 'notes/before-pending-full.png', crop: 'notes/before-pending.png' };
+  await context.exposeBinding('__qaRecorderBefore', async ({ page: source }, rect, viewport) => {
+    await source.screenshot({ path: path.join(dir, pendingBefore.full) });
+    if (rect && viewport) await source.screenshot({ path: path.join(dir, pendingBefore.crop), clip: padded(rect, viewport) });
+  });
   await context.exposeBinding('__qaRecorderNote', async ({ page: source }, note) => {
     const id = String(notes.length + 1).padStart(3, '0');
     const full = `notes/${id}-full.png`;
@@ -218,7 +224,14 @@ async function attachRecorder(context, { dir, notes, events, flush, ignore, over
       crop = `notes/${id}.png`;
       await source.screenshot({ path: path.join(dir, crop), clip: padded(note.rect, note.viewport) });
     }
-    const saved = { id, ...note, screenshots: { crop, full } };
+    const screenshots = { crop, full };
+    if (note.change) {
+      // the after shots are the note's own; the before shots get its id
+      for (const [key, pending, name] of [['beforeFull', pendingBefore.full, `notes/${id}-before-full.png`], ['before', pendingBefore.crop, `notes/${id}-before.png`]]) {
+        if (await fs.rename(path.join(dir, pending), path.join(dir, name)).then(() => true, () => false)) screenshots[key] = name;
+      }
+    }
+    const saved = { id, ...note, screenshots };
     notes.push(saved);
     await flush();
     onNote(saved);
