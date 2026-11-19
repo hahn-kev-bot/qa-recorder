@@ -29,6 +29,13 @@ test('a URL without a scheme gets one', () => {
   assert.throws(() => targetFromUrl('not a url'), /isn't a web address/);
 });
 
+test('a path to a saved page becomes a file URL', () => {
+  const file = path.join(toolRoot(), 'examples', 'snapshot-demo.html');
+  const { config } = targetFromUrl(path.relative(process.cwd(), file));
+  assert.match(config.launch.url, /^file:\/\/.*\/examples\/snapshot-demo\.html$/);
+  assert.equal(targetFromUrl('missing-page.html').config.launch.url, 'https://missing-page.html/', 'only files that exist');
+});
+
 test('schema errors name the problem', async () => {
   assert.deepEqual(await validateTarget({ name: 'x', launch: { type: 'browser' } }), ["/launch: must have required property 'url'"]);
   const errors = await validateTarget({ name: 'x', launch: { type: 'webview2', exe: 'a.exe', url: 'nope' }, setup: [{ click: { text: 'a' }, goto: '/' }] });

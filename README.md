@@ -66,6 +66,31 @@ You also need:
 Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and your text, and is kept as soon as you save it. ⇄
 moves the toolbar to the other side.
 
+### Design changes (prototype)
+
+Two more toolbar buttons let you show a layout change instead of describing it:
+
+- **✥ Move**: drag an element (a button, a card, a link) to where it should go. Drag it again to adjust.
+- **⤡ Resize**: click an element, then drag its right, bottom or corner handle.
+
+Each time, a small panel shows what changed ("button “Renew all”: 140px left, 30px down"). Add a note if you like,
+then **✓ Confirm**; **Undo** or Esc puts the element back. The change stays on the page until it reloads, so the next
+one builds on it.
+
+Each confirmed change is saved as a ✥ Move or ⤡ Resize note with a **before** and an **after** screenshot, the
+element's old and new position and size, and, for a move, the element it was dropped on. `feedback.md` shows them
+side by side, `notes.json` has the same as JSON, and `HANDOFF.md` tells the coding agent to make each change in the
+app's own layout (not with the pixel offsets the tool used to show it).
+
+It works on a live app or website, or on a saved page (an HTML snapshot):
+
+```sh
+node src/cli.mjs start --url examples/snapshot-demo.html   # a made-up library page to try it on
+node src/cli.mjs start --url path/to/saved-page.html       # any page you saved, e.g. with the SingleFile extension
+```
+
+In the app, paste the file's path under **＋ New target**.
+
 The toolbar doesn't disturb the page: an open popup or menu stays open while you take a note about it.
 
 Without you doing anything, every session also records:

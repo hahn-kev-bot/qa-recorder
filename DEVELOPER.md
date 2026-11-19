@@ -79,6 +79,7 @@ The core knows nothing about any particular app: app specifics belong in a targe
 npm test               # unit tests
 npm run check          # syntax of every source file
 npm run smoke:url      # a website target end to end: toolbar, notes, timeline, tabs, trace
+npm run smoke:design   # the design tools (Move, Resize, Undo) on a fixture page, with before and after screenshots
 npm run smoke:gui      # the desktop app end to end, including export, the About page and a transcription
 npm run smoke:voice    # open mic and push-to-talk, with test/fixtures/speech.wav as the microphone
 npm run smoke:fwlite   # Windows: FW Lite's latest develop build end to end
@@ -88,7 +89,7 @@ npm run smoke:dogfood  # the qa-recorder target: this app recording itself
 The smoke tests open real windows on your desktop, and each uses a throwaway data folder. To save downloads, the
 speech tests share your real model folder.
 
-CI (`.github/workflows/test.yml`) runs the unit tests, the syntax check, `smoke:url` and `smoke:gui` on Windows for
+CI (`.github/workflows/test.yml`) runs the unit tests, the syntax check, `smoke:url`, `smoke:design` and `smoke:gui` on Windows for
 every pull request and every push to main.
 
 ## Dogfooding

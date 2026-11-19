@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const KIND_LABEL = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken' };
+const KIND_LABEL = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken', move: '✥ Move', resize: '⤡ Resize' };
+/** Notes made with the Move and Resize tools: a change the tester made to the layout, with before and after. */
+export const isDesignChange = n => !!n.change && (n.kind === 'move' || n.kind === 'resize');
 export const ERROR_TYPES = new Set(['console.error', 'pageerror', 'requestfailed', 'http']);
 const NEARBY_MS = 60_000;
 
@@ -24,7 +26,7 @@ export async function writeBundle({ sessionDir, session, notes, events, speech =
     await fs.writeFile(path.join(sessionDir, 'speech.json'), JSON.stringify(speech, null, 2));
     await fs.writeFile(path.join(sessionDir, 'transcript.md'), transcriptMarkdown(session, speech));
   }
-  await fs.writeFile(path.join(sessionDir, 'HANDOFF.md'), handoffPrompt(session, sessionDir, { speech: speech.length > 0 }));
+  await fs.writeFile(path.join(sessionDir, 'HANDOFF.md'), handoffPrompt(session, sessionDir, { speech: speech.length > 0, design: notes.some(isDesignChange) }));
 }
 
 const quote = s => `“${s}”`;
@@ -131,7 +133,9 @@ function feedbackMarkdown(session, notes, events) {
       steps.slice(-STEPS_BEFORE_NOTE).forEach((s, j) => lines.push(`${j + 1}. ${s}`));
       lines.push('');
     }
-    if (n.screenshots.crop) {
+    if (isDesignChange(n)) {
+      lines.push(...designChangeLines(n));
+    } else if (n.screenshots.crop) {
       lines.push(`![note ${n.id}](${n.screenshots.crop})`, '');
       lines.push(`Full window: [${n.screenshots.full}](${n.screenshots.full})`, '');
     } else {
@@ -253,7 +257,44 @@ function shortUrl(url) {
 }
 
 const firstLine = s => (s ?? '').split('\n')[0].slice(0, 100);
-const noteTitle = n => (n.transcribing ? '(transcribing…)' : firstLine(n.text) || '(no text)');
+const noteTitle = n => (n.transcribing ? '(transcribing…)' : isDesignChange(n) ? changeSummary(n) : firstLine(n.text) || '(no text)');
+
+const elementLabel = t => (t ? `${t.tag}${t.text ? ` ${quote(t.text.slice(0, 40))}` : t.attrs?.['aria-label'] ? ` [${t.attrs['aria-label']}]` : ''}` : 'element');
+
+/** "button “Save”: 120px right, 40px down, onto div “Footer”" or "img: 320×200 → 480×300" */
+export function changeSummary(n) {
+  const c = n.change;
+  if (c.tool === 'move') {
+    const where = c.droppedOn ? `, onto ${elementLabel(c.droppedOn)}` : '';
+    return `${elementLabel(n.target)}: ${Math.abs(c.dx)}px ${c.dx < 0 ? 'left' : 'right'}, ${Math.abs(c.dy)}px ${c.dy < 0 ? 'up' : 'down'}${where}`;
+  }
+  return `${elementLabel(n.target)}: ${c.before.width}×${c.before.height} → ${c.after.width}×${c.after.height}`;
+}
+
+const box = r => `{ x: ${r.x}, y: ${r.y}, width: ${r.width}, height: ${r.height} }`;
+
+/** A Move or Resize note in feedback.md: the tester's note, before and after, and the numbers. */
+function designChangeLines(n) {
+  const c = n.change;
+  const s = n.screenshots;
+  const lines = [];
+  if (n.text && !n.text.includes('\n')) lines.push(`> ${n.text}`, '');
+  lines.push('| Before | After |', '|---|---|');
+  lines.push(`| ${s.before ? `![before](${s.before})` : '_(no screenshot)_'} | ${s.crop ? `![after](${s.crop})` : `![after](${s.full})`} |`, '');
+  lines.push(`Full window: before [${s.beforeFull ?? '(none)'}](${s.beforeFull ?? ''}), after [${s.full}](${s.full})`, '');
+  lines.push('Change (page pixels, at the viewport below):', '', '```yaml');
+  lines.push(`tool: ${c.tool}`);
+  lines.push(`before: ${box(c.before)}`);
+  lines.push(`after: ${box(c.after)}`);
+  if (c.tool === 'move') lines.push(`moved: { dx: ${c.dx}, dy: ${c.dy} }`);
+  else lines.push(`resized: { dw: ${c.dw}, dh: ${c.dh} }`);
+  if (c.droppedOn) lines.push(`droppedOn: { tag: ${c.droppedOn.tag}, text: ${JSON.stringify(c.droppedOn.text)}, cssPath: ${JSON.stringify(c.droppedOn.cssPath)} }`);
+  if (c.parent) lines.push(`parent: { tag: ${c.parent.tag}, cssPath: ${JSON.stringify(c.parent.cssPath)} }`);
+  lines.push(`viewport: { width: ${n.viewport?.width}, height: ${n.viewport?.height} }`);
+  lines.push(`previewCss: ${JSON.stringify(c.style ?? {})}  # how the tool showed it in the page; not the fix`);
+  lines.push('```', '');
+  return lines;
+}
 const oneLine = s => s.replace(/\s+/g, ' ').slice(0, 300);
 
 /**
@@ -266,7 +307,7 @@ const folderLine = dir => (dir ? `- Session folder: \`${dir}\`. The files below 
 /** HANDOFF.md for a copy of the session somewhere else: it points at its own folder instead of the original. */
 export const portableHandoff = (text, sessionDir) => text.replace(folderLine(sessionDir), folderLine());
 
-function handoffPrompt(session, sessionDir, { speech }) {
+function handoffPrompt(session, sessionDir, { speech, design }) {
   const { workspace, hints } = session.handoff ?? {};
   const build = buildLine(session.build);
   const sha = session.build?.sha && session.build.sha !== 'local' ? session.build.sha : undefined;
@@ -287,6 +328,13 @@ ${speech ? `
 \`transcript.md\` has the tester's spoken commentary. Spoken remarks are feedback too, even where no note was saved.
 Transcription can mishear words: when a remark doesn't make sense, mark it for the tester to clarify.
 ` : ''}
+${design ? `
+Notes of kind ✥ Move and ⤡ Resize are **design changes**: the tester dragged an element to a new place, or dragged
+its edges, on the live page, then confirmed it. Each has a before and an after screenshot and the numbers in a
+\`yaml\` block (\`notes.json\` has the same as JSON). The after screenshot is what the tester wants. The pixel numbers
+and \`previewCss\` (a \`translate\`, or a fixed width and height) only record the drag: they are not the fix. Changes
+stack: each one was made on top of the ones before it, in order.
+` : ''}
 Logged errors are leads, not tasks. An error listed under a note may explain that note; errors elsewhere go in the
 plan as possible bugs for the tester to judge (some come from the browser or the network, not the app).
 
@@ -295,7 +343,8 @@ plan as possible bugs for the tester to judge (some come from the browser or the
 ## 2. Locate
 
 For each note, find the code behind it: search for the target element's text, aria-label, placeholder or data
-attributes, which are listed under the note.${sha ? ` Then \`git log --oneline ${sha}..HEAD -- <files>\` shows whether that code
+attributes, which are listed under the note.${design ? ` For a Move, also find where it was dropped (\`droppedOn\`): that is where
+the element should go in the markup.` : ''}${sha ? ` Then \`git log --oneline ${sha}..HEAD -- <files>\` shows whether that code
 changed since the tested build; mark notes that look already fixed.` : ''}
 
 **Done when** every note has its files, or says the code wasn't found.
@@ -314,7 +363,11 @@ one of them. Notes about the same problem share a row.
 - **Medium**: clear, but needs a design choice or touches several places. Propose the fix you would make.
 - **Large**: risky or open-ended, or it touches data or sync code. Propose an issue, and draft it.
 - **Unclear**: ask the question that would settle it.
-
+${design ? `
+For a design change, propose it in the app's own layout terms: which component the element moves to and where among
+its siblings, or which width, flex, grid or spacing rule changes. Match the after screenshot at the recorded
+viewport, and keep it working at other sizes. Never hard-code the tool's \`translate\` or pixel sizes.
+` : ''}
 Then stop. The tester approves, changes or drops each row before you edit anything.
 
 ## 4. Carry out

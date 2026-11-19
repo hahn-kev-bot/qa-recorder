@@ -1,5 +1,7 @@
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { bundledTargetsDir, schemaPath, toolRoot, userTargetsDir } from './paths.mjs';
 
@@ -107,6 +109,8 @@ export async function deleteTarget(id) {
 export function normalizeUrl(input) {
   const s = input.trim();
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^file:/i.test(s)) return s;
+  // a saved page (an HTML snapshot) on this computer, given as a path
+  if (/\.(html?|mhtml?)$/i.test(s) && existsSync(s)) return pathToFileURL(path.resolve(s)).href;
   const local = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?(\/|$)/i.test(s);
   return `${local ? 'http' : 'https'}://${s}`;
 }
