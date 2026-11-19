@@ -33,7 +33,7 @@ await root.locator('button[data-act="move"]').click();
 await drag(centre(before), total.x - before.x, total.y + 40 - before.y);
 await root.locator('.form .what').waitFor();
 await drag(centre(await checkout.boundingBox()), 10, 0); // a second drag adjusts the same element
-assert.match(await root.locator('.form .what').textContent(), /button “Checkout”: \d+px right, \d+px down/);
+assert.match(await root.locator('.form .what').textContent(), /button “Checkout”: \d+px (left|right), \d+px down/);
 await page.keyboard.type('Checkout belongs under the total');
 await root.locator('button[data-form="confirm"]').click();
 await countIs(1);
@@ -72,7 +72,8 @@ const [move, resize] = notes;
 assert.equal(move.kind, 'move');
 assert.equal(move.text, 'Checkout belongs under the total');
 assert.equal(move.target.attrs.id, 'checkout');
-assert.ok(move.change.dx > 100 && move.change.dy > 50, `move recorded (${move.change.dx}, ${move.change.dy})`);
+// the window's width decides which way the summary is from the header button
+assert.ok(Math.abs(move.change.dx - (total.x + 10 - before.x)) < 3 && Math.abs(move.change.dy - (total.y + 40 - before.y)) < 3, `move recorded (${move.change.dx}, ${move.change.dy})`);
 assert.match(move.change.droppedOn?.cssPath ?? '', /aside/, `dropped on the summary (${JSON.stringify(move.change.droppedOn)})`);
 assert.equal(resize.kind, 'resize');
 assert.ok(Math.abs(resize.change.dw - 80) < 3 && Math.abs(resize.change.dh - 60) < 3, `resize recorded (${resize.change.dw}, ${resize.change.dh})`);
