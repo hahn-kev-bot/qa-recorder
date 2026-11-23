@@ -144,7 +144,10 @@ assert.equal(await exportDialog.isVisible(), false, 'the dialog closes after sav
 const unzipped = path.join(home, 'unzipped');
 const { execFileSync } = await import('node:child_process');
 if (process.platform === 'win32') {
-  execFileSync('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${saved}' -DestinationPath '${unzipped}'`]);
+  // .NET directly, not Expand-Archive: started from PowerShell 7 (as CI does), Windows PowerShell inherits its module
+  // path and loads PowerShell 7's Archive module, which fails there without stopping the command
+  execFileSync('powershell.exe', ['-NoProfile', '-Command',
+    `Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory('${saved}', '${unzipped}')`]);
   const [folder] = await fs.readdir(unzipped);
   assert.match(folder, /fixture-cdp$/, 'the zip holds the session folder');
   const files = await fs.readdir(path.join(unzipped, folder), { recursive: true });
