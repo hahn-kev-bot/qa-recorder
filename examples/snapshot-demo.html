@@ -1,0 +1,102 @@
+<!doctype html>
+<!--
+  A made-up page saved as one self-contained HTML file, the way a page snapshot is: styles inline, no scripts.
+  Try the design tools on it:  node src/cli.mjs start --url examples/snapshot-demo.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Greenleaf Library: My loans</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: #1f2937; background: #f8fafc; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: #14532d; color: #fff; }
+  header .logo { font-weight: 700; font-size: 18px; margin-right: auto; }
+  header nav { display: flex; gap: 16px; }
+  header nav a { color: #dcfce7; text-decoration: none; }
+  header .search { padding: 6px 10px; border-radius: 6px; border: 0; width: 220px; }
+  .layout { display: grid; grid-template-columns: 220px 1fr; gap: 24px; max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+  aside.filters { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; align-self: start; }
+  aside.filters h2 { font-size: 15px; margin: 0 0 8px; }
+  aside.filters label { display: block; margin: 4px 0; }
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .toolbar h1 { font-size: 22px; margin: 0; flex: 1; }
+  .btn { border: 1px solid #cbd5e1; background: #fff; border-radius: 6px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  .btn.primary { background: #15803d; border-color: #15803d; color: #fff; }
+  .btn.danger { color: #b91c1c; }
+  .loans { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  .cover { height: 120px; }
+  .card .body { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .card h3 { margin: 0; font-size: 16px; }
+  .due { color: #64748b; font-size: 13px; }
+  .due.soon { color: #b45309; font-weight: 600; }
+  .card .actions { display: flex; gap: 8px; margin-top: auto; }
+  .banner { margin-top: 24px; padding: 14px 16px; border-radius: 10px; background: #fef9c3; border: 1px solid #fde68a; }
+  footer { text-align: center; color: #64748b; font-size: 13px; padding: 24px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="logo">🌿 Greenleaf Library</span>
+    <nav aria-label="Main">
+      <a href="#catalogue">Catalogue</a>
+      <a href="#events">Events</a>
+      <a href="#loans">My loans</a>
+    </nav>
+    <input class="search" type="search" placeholder="Search the catalogue">
+    <button class="btn" type="button">Sign out</button>
+  </header>
+
+  <div class="layout">
+    <aside class="filters" aria-label="Filters">
+      <h2>Show</h2>
+      <label><input type="checkbox" checked> Books</label>
+      <label><input type="checkbox" checked> Audiobooks</label>
+      <label><input type="checkbox"> DVDs</label>
+      <h2 style="margin-top:12px">Due</h2>
+      <label><input type="radio" name="due" checked> Any time</label>
+      <label><input type="radio" name="due"> This week</label>
+    </aside>
+
+    <main>
+      <div class="toolbar">
+        <h1>My loans</h1>
+        <button class="btn danger" type="button">Return all</button>
+        <button class="btn primary" type="button">Renew all</button>
+      </div>
+
+      <section class="loans" aria-label="Loans">
+        <article class="card">
+          <div class="cover" style="background: linear-gradient(135deg, #86efac, #22d3ee)"></div>
+          <div class="body">
+            <h3>The Quiet Orchard</h3>
+            <span class="due soon">Due in 2 days</span>
+            <div class="actions"><button class="btn" type="button">Renew</button><button class="btn" type="button">Details</button></div>
+          </div>
+        </article>
+        <article class="card">
+          <div class="cover" style="background: linear-gradient(135deg, #fda4af, #fcd34d)"></div>
+          <div class="body">
+            <h3>Rivers of the North</h3>
+            <span class="due">Due 3 December</span>
+            <div class="actions"><button class="btn" type="button">Renew</button><button class="btn" type="button">Details</button></div>
+          </div>
+        </article>
+        <article class="card">
+          <div class="cover" style="background: linear-gradient(135deg, #c4b5fd, #93c5fd)"></div>
+          <div class="body">
+            <h3>Bread at Home (audiobook)</h3>
+            <span class="due">Due 9 December</span>
+            <div class="actions"><button class="btn" type="button">Renew</button><button class="btn" type="button">Details</button></div>
+          </div>
+        </article>
+      </section>
+
+      <div class="banner">Holiday hours: the library closes at 3 pm on 24 December.</div>
+    </main>
+  </div>
+
+  <footer>Greenleaf Library is a made-up library for trying QA Recorder.</footer>
+</body>
+</html>

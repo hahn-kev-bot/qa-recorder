@@ -191,12 +191,23 @@
   .actions button.save { background: #2563eb; color: #fff; }
   .toast { position: fixed; bottom: 56px; background: #065f46; color: #fff; padding: 6px 12px; border-radius: 6px; }
   .toast.left { left: 12px; } .toast.right { right: 12px; }
+  .sep { width: 1px; height: 18px; background: #4b5563; margin: 0 4px; }
+  .sel.picked { border-style: dashed; border-color: #f59e0b; background: transparent; }
+  .layer.grab { cursor: grab; } .layer.grabbing { cursor: grabbing; }
+  .handle { position: fixed; width: 12px; height: 12px; margin: -6px 0 0 -6px; background: #f59e0b; border: 2px solid #fff;
+    border-radius: 3px; pointer-events: auto; box-shadow: 0 1px 4px #0006; }
+  .handle[data-h="e"] { cursor: ew-resize; } .handle[data-h="s"] { cursor: ns-resize; } .handle[data-h="se"] { cursor: nwse-resize; }
+  .form .what { font-weight: 600; }
+  .form textarea.short { min-height: 54px; }
 </style>
 <div class="bar left">
   <span class="dot" title="QA session recording"></span>
   <button data-act="element" title="Pick an element (F8)">◎ Element</button>
   <button data-act="region" title="Drag a region (F9)">▭ Region</button>
   <button data-act="note" title="General note (F7)">✎ Note</button>
+  <span class="sep"></span>
+  <button data-act="move" title="Design change: drag an element to where it should go">✥ Move</button>
+  <button data-act="resize" title="Design change: pick an element and drag its edges">⤡ Resize</button>
   <span class="count" title="Notes saved">0</span>
   ${config.voice === 'push-to-talk' ? `<button data-act="mic" class="mic" title="Hold to talk (or hold ${config.talkKey}); each press becomes a spoken note">🎙 Hold ${config.talkKey}</button>` : ''}
   ${config.voice === 'open-mic' ? '<button data-act="mic" class="mic live" title="Open mic: everything you say is transcribed. Click to mute.">🎙 Live</button>' : ''}
@@ -213,6 +224,8 @@
     let finishArmed = null;
     // the current mode's handler for events from inside the overlay (pointer drags, element picking, the form)
     let modeHandler = null;
+    // what Esc (or Undo) must put back: a design tool's change that isn't confirmed yet
+    let onCancel = null;
     setSide(side);
 
     ui = {
@@ -221,10 +234,11 @@
         busy = true;
         if (mode === 'note') return openForm(null, null);
         if (mode === 'region') return pickRegion();
+        if (mode === 'move' || mode === 'resize') return designTool(mode);
         return pickElement();
       },
       busy: () => busy && !!modeHandler,
-      cancel: () => done(),
+      cancel: () => { onCancel?.(); done(); },
       /** Push-to-talk: down/up from the key or the 🎙 button. */
       talk(down) {
         if (down === talking) return;
@@ -290,7 +304,8 @@
     function done() {
       busy = false;
       modeHandler = null;
-      root.querySelectorAll('.layer, .sel, .hint, .form').forEach(n => n.remove());
+      onCancel = null;
+      root.querySelectorAll('.layer, .sel, .hint, .form, .handle').forEach(n => n.remove());
     }
 
     function add(cls, text) {
@@ -394,20 +409,244 @@
           viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio }, at: new Date().toISOString(),
         };
         done();
-        busy = true;
-        host.style.display = 'none'; // keep the toolbar out of the screenshot
-        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-        try {
-          const saved = await window.__qaRecorderNote(note);
-          countEl.textContent = String(saved.count);
-          toast(`Saved note ${saved.id}`);
-        } catch (err) {
-          toast(`Saving failed: ${err?.message ?? err}`);
-        } finally {
-          host.style.display = '';
-          busy = false;
+        await submit(note);
+      }
+    }
+
+    const twoFrames = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /**
+     * Hands a note to the harness, which takes the screenshots, with the toolbar hidden so it stays out of them.
+     * A design change passes `before`: the page is shown as it was for a moment, for the before screenshot.
+     */
+    async function submit(note, before) {
+      busy = true;
+      host.style.display = 'none';
+      try {
+        if (before) {
+          before.revert();
+          await twoFrames();
+          try {
+            await window.__qaRecorderBefore?.(note.rect, note.viewport);
+          } finally {
+            before.reapply();
+          }
+        }
+        await twoFrames();
+        const saved = await window.__qaRecorderNote(note);
+        countEl.textContent = String(saved.count);
+        toast(`Saved ${note.change ? note.kind : 'note'} ${saved.id}`);
+      } catch (err) {
+        toast(`Saving failed: ${err?.message ?? err}`);
+      } finally {
+        host.style.display = '';
+        busy = false;
+      }
+    }
+
+    // ---- design changes: Move and Resize ----
+
+    const STYLE_PROPS = ['translate', 'display', 'width', 'height', 'min-width', 'max-width', 'min-height', 'max-height', 'flex'];
+    const rectOf = el => {
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+    };
+    const union = (a, b) => {
+      const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+      return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y };
+    };
+    const parseTranslate = v => {
+      const [x = 0, y = 0] = v && v !== 'none' ? v.split(' ').map(parseFloat) : [];
+      return { x: x || 0, y: y || 0 };
+    };
+    const label = t => `${t.tag}${t.text ? ` “${t.text.slice(0, 30)}”` : ''}`;
+    const px = n => `${Math.round(n)}px`;
+
+    /** The inline styles that show a change: a translate for Move, a fixed size for Resize. */
+    function changeStyles(p) {
+      const styles = {};
+      if (p.inlineBox) styles.display = 'inline-block'; // transforms and sizes don't apply to inline boxes
+      if (p.mode === 'move') {
+        styles.translate = `${px(p.base.x + p.dx)} ${px(p.base.y + p.dy)}`;
+      } else {
+        const inner = p.borderBox ? { x: 0, y: 0 } : p.chrome;
+        styles.width = px(Math.max(1, p.w - inner.x));
+        styles.height = px(Math.max(1, p.h - inner.y));
+        Object.assign(styles, { 'min-width': '0', 'max-width': 'none', 'min-height': '0', 'max-height': 'none' });
+        if (p.flexChild) styles.flex = '0 0 auto';
+      }
+      return styles;
+    }
+    function applyChange(p) {
+      for (const [prop, value] of Object.entries(changeStyles(p))) p.el.style.setProperty(prop, value, 'important');
+    }
+    function restore(p) {
+      for (const [prop, [value, priority]] of Object.entries(p.inline)) {
+        if (value) p.el.style.setProperty(prop, value, priority);
+        else p.el.style.removeProperty(prop);
+      }
+    }
+
+    /** What the moved element's centre now sits on: the place in the layout the tester dropped it. */
+    function dropTarget(el, r) {
+      const skip = n => n === host || host.contains(n) || n === el || el.contains(n) || n === document.documentElement || n === document.body;
+      return document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2).find(n => !skip(n)) ?? null;
+    }
+
+    /**
+     * Move drags an element to where it should go; Resize drags its right and bottom edges. The change is made in
+     * the page (inline styles), so the tester sees the result, and stays until the page reloads, so later changes
+     * build on it. Confirm records it with before and after screenshots; Undo or Esc puts the element back.
+     */
+    function designTool(mode) {
+      const hint = add('hint', mode === 'move' ? 'Drag an element to where it should go · Esc to cancel' : 'Click an element to resize · Esc to cancel');
+      const layer = add('layer');
+      const sel = add('sel');
+      let pick = null;
+      let drag = null;
+      let panel = null;
+      let handles = [];
+      onCancel = () => { if (pick) restore(pick); };
+
+      function choose(el) {
+        const cs = getComputedStyle(el);
+        const before = rectOf(el);
+        pick = {
+          mode, el, before,
+          target: describe(el),
+          inline: Object.fromEntries(STYLE_PROPS.map(p => [p, [el.style.getPropertyValue(p), el.style.getPropertyPriority(p)]])),
+          base: parseTranslate(cs.translate),
+          inlineBox: cs.display === 'inline',
+          flexChild: /flex/.test(getComputedStyle(el.parentElement ?? document.body).display),
+          borderBox: cs.boxSizing === 'border-box',
+          // padding and border, which a content-box width leaves out
+          chrome: {
+            x: ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth'].reduce((n, k) => n + parseFloat(cs[k]), 0),
+            y: ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((n, k) => n + parseFloat(cs[k]), 0),
+          },
+          dx: 0, dy: 0, w: before.width, h: before.height,
+        };
+        sel.classList.add('picked');
+        layer.classList.toggle('grab', mode === 'move');
+        hint.textContent = mode === 'move' ? 'Drag it again to adjust, then Confirm · Esc to undo' : 'Drag the handles, then Confirm · Esc to undo';
+        if (mode === 'resize') {
+          handles = ['e', 's', 'se'].map(h => {
+            const handle = add('handle');
+            handle.dataset.h = h;
+            return handle;
+          });
         }
       }
+
+      function summary() {
+        if (mode === 'move') {
+          const r = rectOf(pick.el);
+          const dx = r.x - pick.before.x, dy = r.y - pick.before.y;
+          return `${label(pick.target)}: ${Math.abs(dx)}px ${dx < 0 ? 'left' : 'right'}, ${Math.abs(dy)}px ${dy < 0 ? 'up' : 'down'}`;
+        }
+        const r = rectOf(pick.el);
+        return `${label(pick.target)}: ${pick.before.width}×${pick.before.height} → ${r.width}×${r.height}`;
+      }
+
+      function sync() {
+        const r = pick.el.getBoundingClientRect();
+        place(sel, r);
+        const at = { e: [r.right, r.top + r.height / 2], s: [r.left + r.width / 2, r.bottom], se: [r.right, r.bottom] };
+        for (const handle of handles) {
+          const [x, y] = at[handle.dataset.h];
+          Object.assign(handle.style, { left: x + 'px', top: y + 'px' });
+        }
+        if (panel) panel.querySelector('.what').textContent = summary();
+      }
+
+      function showPanel() {
+        if (!panel) {
+          panel = add('form');
+          panel.innerHTML = html(`<div class="what"></div>
+            <textarea class="short" placeholder="Anything the agent should know (optional)"></textarea>
+            <div class="actions"><span>Ctrl+Enter to confirm · Esc to undo</span>
+              <span><button data-form="undo">Undo</button> <button data-form="confirm" class="save">✓ Confirm</button></span></div>`);
+        }
+        // a drag moves focus off the note; give it back so typing carries on into it
+        panel.querySelector('textarea').focus({ preventScroll: true });
+        // below the element when it fits, else above it, else in the top corner away from the toolbar
+        const r = pick.el.getBoundingClientRect();
+        const fw = 340, fh = 150;
+        const left = Math.min(Math.max(8, r.x), innerWidth - fw - 8);
+        const top = r.bottom + 8 + fh < innerHeight ? r.bottom + 8 : r.top - fh - 8 > 8 ? r.top - fh - 8 : 8;
+        Object.assign(panel.style, { left: left + 'px', top: top + 'px' });
+        sync();
+      }
+
+      async function confirm() {
+        const p = pick;
+        const after = rectOf(p.el);
+        const parent = p.el.parentElement && p.el.parentElement !== document.body ? describe(p.el.parentElement) : undefined;
+        const change = p.mode === 'move'
+          ? { tool: 'move', before: p.before, after, dx: after.x - p.before.x, dy: after.y - p.before.y, droppedOn: describe(dropTarget(p.el, after)) ?? undefined, parent }
+          : { tool: 'resize', before: p.before, after, dw: after.width - p.before.width, dh: after.height - p.before.height, parent };
+        change.style = changeStyles(p);
+        const note = {
+          kind: p.mode, text: panel.querySelector('textarea').value.trim(), rect: union(p.before, after), target: p.target, change,
+          url: location.href, viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio }, at: new Date().toISOString(),
+        };
+        done(); // the change stays on the page; later changes build on it
+        await submit(note, { revert: () => restore(p), reapply: () => applyChange(p) });
+      }
+
+      modeHandler = (e, el) => {
+        if (panel && el instanceof Element && panel.contains(el)) {
+          if (e.type === 'keydown' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return void confirm();
+          if (e.type !== 'click') return;
+          const action = el.closest('button')?.dataset.form;
+          if (action === 'undo') ui.cancel();
+          else if (action === 'confirm') void confirm();
+          return;
+        }
+        const onHandle = handles.includes(el);
+        if (el !== layer && !onHandle) return;
+        if (e.type === 'pointerdown') {
+          if (onHandle) {
+            el.setPointerCapture(e.pointerId);
+            drag = { x: e.clientX, y: e.clientY, w: pick.w, h: pick.h, h0: el.dataset.h };
+            return;
+          }
+          if (!pick) {
+            const target = elementAt(e.clientX, e.clientY);
+            if (!target || target === document.body || target === document.documentElement) return;
+            choose(target);
+            if (mode === 'resize') return showPanel();
+          } else if (mode !== 'move') {
+            return;
+          } else {
+            const r = pick.el.getBoundingClientRect();
+            if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+          }
+          layer.setPointerCapture(e.pointerId);
+          layer.classList.add('grabbing');
+          drag = { x: e.clientX, y: e.clientY, dx: pick.dx, dy: pick.dy };
+        } else if (e.type === 'pointermove') {
+          if (!pick) {
+            const target = elementAt(e.clientX, e.clientY);
+            if (target) place(sel, target.getBoundingClientRect());
+            return;
+          }
+          if (!drag) return;
+          if (mode === 'move') {
+            pick.dx = drag.dx + e.clientX - drag.x;
+            pick.dy = drag.dy + e.clientY - drag.y;
+          } else {
+            if (drag.h0.includes('e')) pick.w = Math.max(4, drag.w + e.clientX - drag.x);
+            if (drag.h0.includes('s')) pick.h = Math.max(4, drag.h + e.clientY - drag.y);
+          }
+          applyChange(pick);
+          sync();
+        } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && drag) {
+          drag = null;
+          layer.classList.remove('grabbing');
+          showPanel();
+        }
+      };
     }
 
     function toast(message) {
