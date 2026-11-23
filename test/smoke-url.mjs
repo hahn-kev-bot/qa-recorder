@@ -113,7 +113,7 @@ assert.equal(saved.notes, 2);
 // the timeline: the tester's actions in words, setup steps marked, toolbar clicks left out
 const actions = events.filter(e => e.type === 'action');
 assert.ok(actions.some(a => a.setup && a.action === 'click' && a.target.name === 'Search'), 'setup click recorded as setup');
-assert.ok(!actions.some(a => a.target?.name?.includes('Region')), 'toolbar clicks are not app actions');
+assert.ok(!actions.some(a => /Area|Region/.test(a.target?.name ?? '')), 'toolbar clicks are not app actions');
 const note1Steps = md.split('## 001.')[1].split('## 002.')[0];
 assert.match(note1Steps, /Steps before this note:\s+1\. went to http:\/\/127\.0\.0\.1:\d+\/\s+2\. click button “Open menu”/);
 const note2Steps = md.split('## 002.')[1];

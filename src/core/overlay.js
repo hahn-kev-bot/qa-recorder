@@ -19,10 +19,10 @@
   const html = s => (policy ? policy.createHTML(s) : s);
 
   const KINDS = [
-    { id: 'bug', label: '🐛 Bug' },
-    { id: 'dislike', label: '👎 Dislike' },
-    { id: 'idea', label: '💡 Idea' },
-    { id: 'like', label: '👍 Like' },
+    { id: 'bug', label: 'Bug' },
+    { id: 'dislike', label: 'Dislike' },
+    { id: 'idea', label: 'Idea' },
+    { id: 'like', label: 'Like' },
   ];
   const HOTKEYS = { F7: 'note', F8: 'element', F9: 'region' };
   const SHIELDED = ['pointerdown', 'pointerup', 'pointermove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave',
@@ -56,9 +56,19 @@
         ui.cancel();
         return;
       }
+      if (type === 'keydown' && e.key === 'Escape' && ui?.menuOpen()) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        ui.closeMenu();
+        return;
+      }
       if (!host) return;
       const ours = e.composedPath().includes(host) || e.relatedTarget === host;
-      if (!ours) return;
+      if (!ours) {
+        // a press on the page puts the toolbar's menu away, as it would any menu
+        if (type === 'pointerdown') ui?.closeMenu();
+        return;
+      }
       // stop it reaching the app; default actions (typing, focusing the textarea) still happen
       e.stopImmediatePropagation();
       ui?.handle(e);
@@ -154,6 +164,46 @@
     sendAction({ action: 'key', key, target: e.target instanceof Element && e.target !== document.body ? brief(e.target) : undefined });
   }, true);
 
+  // ---- the toolbar: a labelled bar, a step line that says what to do next, and one tag dialog ----
+
+  const TOOLS = [
+    { act: 'element', label: 'Element', key: 'F8', title: 'Pick one thing on the page and write a note about it (F8)' },
+    { act: 'region', label: 'Area', key: 'F9', title: 'Drag a box round an area and write a note about it (F9)' },
+    { act: 'note', label: 'Note', key: 'F7', title: 'Write a note about the whole page (F7)' },
+    { act: 'move', label: 'Move', title: 'Show a layout change: drag something to where it should go' },
+    { act: 'resize', label: 'Resize', title: 'Show a layout change: pick something and drag its edges' },
+  ];
+  const ICONS = {
+    element: '<path d="M4 3l5 13 2-5 5-2z"/>',
+    region: '<rect x="3" y="4" width="14" height="12" rx="1" stroke-dasharray="3 2.4"/>',
+    note: '<path d="M5 3h7l4 4v10H5z"/><path d="M12 3v4h4M8 11h5M8 14h3"/>',
+    move: '<path d="M10 2v16M2 10h16M10 2L7.5 4.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5"/>',
+    resize: '<rect x="3" y="3" width="9" height="9"/><path d="M17 12v5h-5M17 17l-6-6"/>',
+    side: '<path d="M3 7h12l-3-3M17 13H5l3 3"/>',
+    collapse: '<path d="M8 3v5H3M12 17v-5h5M8 8L3 3M12 12l5 5"/>',
+    expand: '<path d="M3 8V3h5M17 12v5h-5M3 3l5 5M17 17l-5-5"/>',
+    menu: '<path d="M3 5h14M3 10h14M3 15h14"/>',
+    mic: '<rect x="7.5" y="2" width="5" height="10" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0M10 15v3"/>',
+    grip: '<path d="M7 5v.01M13 5v.01M7 10v.01M13 10v.01M7 15v.01M13 15v.01"/>',
+  };
+  const icon = name => `<svg class="ic ic-${name}" viewBox="0 0 20 20" aria-hidden="true">${ICONS[name]}</svg>`;
+  // the page may block storage; the toolbar then just forgets its place
+  const store = {
+    get(key) { try { return localStorage.getItem(`qa-recorder-${key}`); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(`qa-recorder-${key}`, value); } catch { /* not kept */ } },
+  };
+  const ROLE_WORDS = { button: 'Button', link: 'Link', textbox: 'Text box', searchbox: 'Search box', checkbox: 'Checkbox', radio: 'Option',
+    combobox: 'Drop-down', image: 'Picture', img: 'Picture', heading: 'Heading', tab: 'Tab', menuitem: 'Menu item', slider: 'Slider' };
+  /** What a tester would call an element: "Button “Search”". */
+  function sayWhat(el) {
+    if (!el) return 'Part of the page';
+    const { role, name } = brief(el);
+    const word = ROLE_WORDS[role] ?? (/^h[1-6]$/.test(role) ? 'Heading' : null);
+    if (word && name) return `${word} “${name}”`;
+    if (name) return `“${name}”`;
+    return word ?? 'Part of the page';
+  }
+
   function mountToolbar() {
     if (!document.body) return void document.addEventListener('DOMContentLoaded', mount, { once: true });
     host = document.createElement('div');
@@ -161,65 +211,152 @@
     host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
     document.documentElement.appendChild(host);
     const root = host.attachShadow({ mode: 'open' });
+    const tool = t => `<button data-act="${t.act}" class="t" title="${t.title}" aria-pressed="false">${icon(t.act)}<span class="lbl">${t.label}</span>${t.key ? `<kbd>${t.key}</kbd>` : ''}</button>`;
+    const mic = config.voice === 'push-to-talk'
+      ? `<button data-act="mic" class="t mic" title="Hold to talk (or hold ${config.talkKey}); each press becomes a spoken note">${icon('mic')}<span class="lbl">Hold ${config.talkKey}</span></button>`
+      : config.voice === 'open-mic'
+        ? `<button data-act="mic" class="t mic live" title="Open mic: everything you say is written down. Click to mute.">${icon('mic')}<span class="lbl">Live</span></button>`
+        : '';
     root.innerHTML = html(`
 <style>
-  * { box-sizing: border-box; font: 13px/1.4 system-ui, sans-serif; }
-  .bar { position: fixed; bottom: 12px; display: flex; gap: 2px; align-items: center; padding: 4px;
-    background: #1f2937; color: #f9fafb; border-radius: 999px; box-shadow: 0 4px 16px #0005; pointer-events: auto; opacity: .85; }
-  .bar.left { left: 12px; } .bar.right { right: 12px; }
-  .bar:hover { opacity: 1; }
-  .bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; margin: 0 4px 0 8px; }
-  button { cursor: pointer; border: 0; border-radius: 999px; padding: 4px 10px; background: transparent; color: inherit; }
-  .bar button:hover { background: #374151; }
-  .bar button.finish { background: #374151; }
-  .bar button.finish.armed { background: #dc2626; }
-  .count { padding: 0 6px; color: #9ca3af; }
-  .bar button.mic.talking { background: #dc2626; }
-  .bar button.mic.live { color: #86efac; }
-  .bar button.mic.muted { color: #9ca3af; }
+  :host { --ink: #14181f; --card: #fffdf7; --wash: #efe9da; --muted: #566070; --focus: #1f6feb;
+    --bug: #d92d20; --dislike: #f5a300; --idea: #1f6feb; --like: #157a40; --design: #6d3fc4; }
+  * { box-sizing: border-box; font: 13px/1.35 system-ui, "Segoe UI", sans-serif; }
+  [hidden] { display: none !important; }
+  ::selection { background: #ffd166; color: var(--ink); }
+  [data-k="bug"] { --k: var(--bug); --on: #fff; } [data-k="dislike"] { --k: var(--dislike); --on: var(--ink); }
+  [data-k="idea"] { --k: var(--idea); --on: #fff; } [data-k="like"] { --k: var(--like); --on: #fff; }
+  [data-k="design"] { --k: var(--design); --on: #fff; }
+  .ic { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  button { cursor: pointer; margin: 0; border: 0; background: transparent; color: inherit; }
+  button:focus-visible, textarea:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  /* an ink line on a white card, with a white edge outside it: readable on a light page and a dark one */
+  .dock { position: fixed; bottom: 12px; display: flex; flex-direction: column; gap: 8px; pointer-events: none; color: var(--ink); }
+  .dock.left { left: 12px; align-items: flex-start; } .dock.right { right: 12px; align-items: flex-end; }
+  .dock > * { pointer-events: auto; }
+  .bar, .menu { background: var(--card); border: 2px solid var(--ink); border-radius: 12px; outline: 2px solid var(--card);
+    box-shadow: 0 8px 24px #0000004d; }
+  .bar { display: flex; align-items: stretch; }
+  .grp { padding: 5px 8px 8px; border-left: 2px solid var(--ink); } .grp:first-child { border-left: 0; }
+  .grp > small { display: block; height: 15px; margin-bottom: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); white-space: nowrap; }
+  .row { display: flex; gap: 4px; align-items: center; }
+  .t { position: relative; width: 62px; height: 50px; padding: 0; display: grid; justify-items: center; align-content: center; gap: 2px; border-radius: 8px; }
+  .t .lbl { font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .t kbd { position: absolute; top: 2px; right: 4px; font-size: 9.5px; font-weight: 600; color: var(--muted); }
+  .t:hover, .menu button:hover { background: var(--wash); }
+  .t[aria-pressed="true"] { background: var(--ink); color: var(--card); } .t[aria-pressed="true"] kbd { color: #c9cfd8; }
+  .t:active { transform: translateY(1px); }
+  .rec { display: flex; align-items: center; gap: 6px; height: 50px; padding: 0 4px; }
+  .rec i { width: 10px; height: 10px; border-radius: 50%; background: var(--bug); }
+  .rec .lbl { font-size: 12px; font-weight: 600; }
+  .mic { width: 66px; } .mic.talking { background: var(--bug); color: #fff; } .mic.live { color: var(--like); } .mic.muted { color: var(--muted); }
+  .saved { width: 62px; height: 50px; display: grid; justify-items: center; align-content: center; border: 2px dashed var(--ink); border-radius: 8px; }
+  .count { font-size: 20px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .saved .lbl { font-size: 10.5px; font-weight: 600; }
+  .saved.stamp { animation: stamp .9s cubic-bezier(.16, 1, .3, 1); }
+  @keyframes stamp { 0% { background: var(--k); color: var(--on); border-style: solid; transform: scale(1.2); } 60% { background: var(--k); color: var(--on); border-style: solid; transform: none; } }
+  .finish { width: 86px; border: 2px solid var(--ink); } .finish .lbl { font-size: 13px; font-weight: 700; }
+  .finish.armed, .finish.armed:hover { background: var(--bug); border-color: var(--bug); color: #fff; }
+  .ic-expand, .g-menu { display: none; }
+
+  /* collapsed: the last tool used, the count, and a menu with the rest */
+  .dock.collapsed .grp > small, .dock.collapsed .rec .lbl, .dock.collapsed .g-design, .dock.collapsed .g-more { display: none; }
+  .dock.collapsed .grp { padding: 6px; } .dock.collapsed .g-menu { display: block; }
+  .dock.collapsed .ic-collapse { display: none; } .dock.collapsed .ic-expand { display: block; }
+  .menu { display: grid; gap: 2px; min-width: 190px; padding: 6px; }
+  .menu .t { width: 100%; height: 38px; padding: 0 10px; display: flex; align-items: center; justify-content: flex-start; gap: 10px; }
+  .menu .t .lbl { font-size: 13px; } .menu .t kbd { position: static; margin-left: auto; font-size: 11px; }
+  .menu .finish { margin-top: 4px; justify-content: center; }
+
+  .step { display: flex; align-items: center; gap: 8px; max-width: min(520px, calc(100vw - 24px)); padding: 7px 12px; background: var(--ink); color: var(--card);
+    border-radius: 8px; outline: 2px solid var(--card); }
+  .step b { font-weight: 700; color: #ffd166; white-space: nowrap; }
+  .step.error { background: var(--bug); color: #fff; }
+  .step button { flex: none; padding: 3px 10px; border: 2px solid currentColor; border-radius: 6px; font-weight: 700; }
+
   .layer { position: fixed; inset: 0; pointer-events: auto; cursor: crosshair; background: #0000000d; }
-  .sel { position: fixed; border: 2px solid #3b82f6; background: #3b82f622; pointer-events: none; }
-  .hint { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff;
-    padding: 6px 12px; border-radius: 6px; pointer-events: none; }
-  .form { position: fixed; width: 340px; background: #fff; color: #111827; border-radius: 8px; padding: 10px;
-    box-shadow: 0 8px 32px #0006; pointer-events: auto; display: flex; flex-direction: column; gap: 8px; }
-  .kinds { display: flex; gap: 4px; flex-wrap: wrap; }
-  .kinds button { background: #f3f4f6; }
-  .kinds button[aria-pressed="true"] { background: #2563eb; color: #fff; }
-  textarea { width: 100%; min-height: 90px; resize: vertical; border: 1px solid #d1d5db; border-radius: 6px; padding: 6px; }
-  .actions { display: flex; justify-content: space-between; align-items: center; color: #6b7280; font-size: 12px; }
-  .actions button.save { background: #2563eb; color: #fff; }
-  .toast { position: fixed; bottom: 56px; background: #065f46; color: #fff; padding: 6px 12px; border-radius: 6px; }
-  .toast.left { left: 12px; } .toast.right { right: 12px; }
-  .sep { width: 1px; height: 18px; background: #4b5563; margin: 0 4px; }
-  .sel.picked { border-style: dashed; border-color: #f59e0b; background: transparent; }
   .layer.grab { cursor: grab; } .layer.grabbing { cursor: grabbing; }
-  .handle { position: fixed; width: 12px; height: 12px; margin: -6px 0 0 -6px; background: #f59e0b; border: 2px solid #fff;
-    border-radius: 3px; pointer-events: auto; box-shadow: 0 1px 4px #0006; }
+  .sel { position: fixed; border: 3px solid var(--k, var(--ink)); outline: 2px solid var(--card); border-radius: 3px; pointer-events: none; }
+  .sel.picked { border-style: dashed; }
+  .sel b, .form .num { font-weight: 800; font-variant-numeric: tabular-nums; }
+  .sel b { position: absolute; left: -3px; bottom: 100%; min-width: 30px; height: 26px; padding: 0 8px; display: grid; place-items: center;
+    background: var(--k); color: var(--on); font-size: 15px; border-radius: 4px 4px 0 0; }
+  .sel.in b { bottom: auto; top: -3px; border-radius: 0 0 4px 0; }
+  .leader { position: fixed; width: 3px; background: var(--k); outline: 1px solid var(--card); pointer-events: none; }
+  .handle { position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; background: var(--design); border: 2px solid var(--card);
+    outline: 2px solid var(--ink); border-radius: 3px; pointer-events: auto; }
   .handle[data-h="e"] { cursor: ew-resize; } .handle[data-h="s"] { cursor: ns-resize; } .handle[data-h="se"] { cursor: nwse-resize; }
-  .form .what { font-weight: 600; }
-  .form textarea.short { min-height: 54px; }
+
+  /* the tag: one dialog for a note and for a layout change */
+  .form { position: fixed; width: 380px; max-width: calc(100vw - 16px); background: var(--card); color: var(--ink); border: 2px solid var(--ink);
+    border-radius: 10px; outline: 2px solid var(--card); box-shadow: 0 14px 36px #00000059; overflow: hidden; pointer-events: auto; }
+  .head { display: flex; align-items: center; gap: 12px; padding: 9px 12px 9px 14px; background: var(--k); color: var(--on); cursor: grab;
+    user-select: none; touch-action: none; }
+  .form.dragging .head { cursor: grabbing; }
+  .form .num { font-size: 34px; line-height: 1; }
+  .about { flex: 1; min-width: 0; } .about small { display: block; font-size: 11.5px; font-weight: 600; }
+  .about strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 14.5px; font-weight: 700; overflow: hidden; overflow-wrap: anywhere; }
+  .head .ic { opacity: .75; stroke-width: 2.6; }
+  .body { display: grid; gap: 10px; padding: 12px 14px 14px; }
+  /* the text box and the kind of note are one field, so the tag has a single row of buttons */
+  .field { background: #fff; border: 2px solid var(--ink); border-radius: 8px; overflow: hidden; }
+  .field:has(textarea:focus-visible) { outline: 3px solid var(--focus); outline-offset: 1px; }
+  .kinds { display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--card); border-top: 1px solid #cfc8b6; }
+  .kinds button { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 5px; font-weight: 600; }
+  .kinds button:hover { background: var(--wash); }
+  .kinds button[aria-pressed="true"] { background: var(--ink); color: var(--card); }
+  .kinds button:focus-visible { outline-offset: -3px; }
+  .shape { width: 11px; height: 11px; background: var(--k); }
+  .kinds [data-k="bug"] .shape { border-radius: 50%; } .kinds [data-k="dislike"] .shape { transform: rotate(45deg) scale(.85); }
+  .kinds [data-k="like"] .shape { clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  textarea { display: block; width: 100%; min-height: 92px; resize: vertical; padding: 8px 10px; background: #fff; color: var(--ink); border: 0;
+    font-size: 14px; caret-color: var(--ink); }
+  textarea.short { min-height: 58px; } textarea::placeholder { color: var(--muted); } textarea:focus-visible { outline: none; }
+  .actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .keys { font-size: 12px; color: var(--muted); } .btns { display: flex; gap: 8px; flex: none; }
+  .btns button { padding: 7px 14px; border: 2px solid var(--ink); border-radius: 8px; font-weight: 700; white-space: nowrap; }
+  .btns button:hover { background: var(--wash); } .btns button:active { transform: translateY(1px); }
+  .btns .save { background: var(--ink); color: var(--card); } .btns .save:hover { background: #2b3340; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 </style>
-<div class="bar left">
-  <span class="dot" title="QA session recording"></span>
-  <button data-act="element" title="Pick an element (F8)">◎ Element</button>
-  <button data-act="region" title="Drag a region (F9)">▭ Region</button>
-  <button data-act="note" title="General note (F7)">✎ Note</button>
-  <span class="sep"></span>
-  <button data-act="move" title="Design change: drag an element to where it should go">✥ Move</button>
-  <button data-act="resize" title="Design change: pick an element and drag its edges">⤡ Resize</button>
-  <span class="count" title="Notes saved">0</span>
-  ${config.voice === 'push-to-talk' ? `<button data-act="mic" class="mic" title="Hold to talk (or hold ${config.talkKey}); each press becomes a spoken note">🎙 Hold ${config.talkKey}</button>` : ''}
-  ${config.voice === 'open-mic' ? '<button data-act="mic" class="mic live" title="Open mic: everything you say is transcribed. Click to mute.">🎙 Live</button>' : ''}
-  <button data-act="side" title="Move the toolbar to the other side">⇄</button>
-  <button data-act="finish" class="finish" title="Finish the session and close the app">Finish</button>
+<div class="dock left">
+  <div class="step" role="status" hidden><b></b><span></span><button data-act="dismiss" hidden>Dismiss</button></div>
+  <div class="menu" hidden></div>
+  <div class="bar">
+    <div class="grp"><small>Session</small><div class="row"><span class="rec" title="This session is being recorded"><i></i><span class="lbl">Recording</span></span>${mic}</div></div>
+    <div class="grp g-note"><small>Leave a note about</small><div class="row"></div></div>
+    <div class="grp g-design"><small>Show a layout change</small><div class="row"></div></div>
+    <div class="grp"><small>Saved</small><div class="row"><span class="saved" title="Notes saved in this session"><b class="count">0</b><span class="lbl">notes</span></span></div></div>
+    <div class="grp g-more"><small>&nbsp;</small><div class="row"></div></div>
+    <div class="grp g-menu"><div class="row"><button data-act="menu" class="t" title="The other tools, and Finish" aria-expanded="false">${icon('menu')}<span class="lbl">Menu</span></button></div></div>
+  </div>
+  <div class="parts" hidden>${TOOLS.map(tool).join('')}
+    <button data-act="collapse" class="t" title="Make the toolbar smaller">${icon('collapse')}${icon('expand')}<span class="lbl">Collapse</span></button>
+    <button data-act="side" class="t" title="Move the toolbar to the other side">${icon('side')}<span class="lbl">Side</span></button>
+    <button data-act="finish" class="t finish" title="Finish the session and close the app"><span class="lbl">Finish</span></button>
+  </div>
 </div>`);
+    const dock = root.querySelector('.dock');
     const bar = root.querySelector('.bar');
+    const menu = root.querySelector('.menu');
+    const stepEl = root.querySelector('.step');
+    const savedEl = root.querySelector('.saved');
     const countEl = root.querySelector('.count');
-    const finishBtn = root.querySelector('.finish');
     const micBtn = root.querySelector('.mic');
+    const button = act => root.querySelector(`button[data-act="${act}"]`);
+    const toolBtn = Object.fromEntries(TOOLS.map(t => [t.act, button(t.act)]));
+    const collapseBtn = button('collapse'), sideBtn = button('side'), finishBtn = button('finish'), menuBtn = button('menu');
+    const rows = { note: root.querySelector('.g-note .row'), design: root.querySelector('.g-design .row'), more: root.querySelector('.g-more .row') };
     let talking = false;
-    let side = localStorage.getItem('qa-recorder-side') === 'right' ? 'right' : 'left';
+    let side = store.get('side') === 'right' ? 'right' : 'left';
+    // Spoken remarks are photographed with the toolbar on screen (hiding it would make it blink each time the tester
+    // speaks), so a voice session starts with the small bar, which covers little of the page.
+    let collapsed = store.get('collapsed') === null ? ['push-to-talk', 'open-mic'].includes(config.voice) : store.get('collapsed') === '1';
+    let narrow = false; // the window is too small for the full bar
+    let last = toolBtn[store.get('last')] ? store.get('last') : 'element';
+    let count = 0;
     let busy = false;
     let finishArmed = null;
     // the current mode's handler for events from inside the overlay (pointer drags, element picking, the form)
@@ -227,25 +364,34 @@
     // what Esc (or Undo) must put back: a design tool's change that isn't confirmed yet
     let onCancel = null;
     setSide(side);
+    refit();
+    window.addEventListener('resize', refit);
 
     ui = {
       start(mode) {
         if (busy) return;
         busy = true;
-        if (mode === 'note') return openForm(null, null);
+        last = mode;
+        store.set('last', mode);
+        closeMenu();
+        layout();
+        toolBtn[mode]?.setAttribute('aria-pressed', 'true');
+        if (mode === 'note') return openForm(null, null, 'The whole page');
         if (mode === 'region') return pickRegion();
         if (mode === 'move' || mode === 'resize') return designTool(mode);
         return pickElement();
       },
       busy: () => busy && !!modeHandler,
       cancel: () => { onCancel?.(); done(); },
-      /** Push-to-talk: down/up from the key or the 🎙 button. */
+      menuOpen: () => !menu.hidden,
+      closeMenu,
+      /** Push-to-talk: down/up from the key or the microphone button. */
       talk(down) {
         if (down === talking) return;
         talking = down;
         micBtn?.classList.toggle('talking', down);
-        if (micBtn) micBtn.textContent = down ? '● Talking…' : `🎙 Hold ${config.talkKey}`;
-        void window.__qaRecorderTalk?.(down).then(r => { if (r) countEl.textContent = String(r.count); }).catch(() => {});
+        if (micBtn) micBtn.querySelector('.lbl').textContent = down ? 'Talking' : `Hold ${config.talkKey}`;
+        void window.__qaRecorderTalk?.(down).then(r => { if (r) setCount(r.count); }).catch(() => {});
       },
       handle(e) {
         const el = e.composedPath()[0];
@@ -262,15 +408,19 @@
             void window.__qaRecorderMute?.(muted).then(r => {
               micBtn.classList.toggle('muted', r.muted);
               micBtn.classList.toggle('live', !r.muted);
-              micBtn.textContent = r.muted ? '🔇 Muted' : '🎙 Live';
+              micBtn.querySelector('.lbl').textContent = r.muted ? 'Muted' : 'Live';
             });
           }
           return;
         }
-        if (e.type === 'click' && el instanceof Element && bar.contains(el)) {
+        if (el instanceof Element && dock.contains(el)) {
+          if (e.type !== 'click') return;
           const act = el.closest('button')?.dataset.act;
           if (act === 'side') setSide(side === 'left' ? 'right' : 'left');
           else if (act === 'finish') finish();
+          else if (act === 'menu') menu.hidden ? openMenu() : closeMenu();
+          else if (act === 'collapse') setCollapsed(!collapsed);
+          else if (act === 'dismiss') setStep();
           else if (act) ui.start(act);
           return;
         }
@@ -280,24 +430,80 @@
 
     function setSide(next) {
       side = next;
-      localStorage.setItem('qa-recorder-side', side);
-      bar.classList.toggle('left', side === 'left');
-      bar.classList.toggle('right', side === 'right');
+      store.set('side', side);
+      dock.classList.toggle('left', side === 'left');
+      dock.classList.toggle('right', side === 'right');
+    }
+
+    function setCollapsed(next) {
+      collapsed = next;
+      store.set('collapsed', collapsed ? '1' : '0');
+      closeMenu();
+      refit();
+    }
+
+    /** Puts each button where the current form of the bar wants it: in its group, or in the menu. */
+    function layout(small = collapsed || narrow) {
+      dock.classList.toggle('collapsed', small);
+      collapseBtn.querySelector('.lbl').textContent = small ? 'Expand' : 'Collapse';
+      collapseBtn.title = small ? 'Show the whole toolbar' : 'Make the toolbar smaller';
+      collapseBtn.hidden = small && narrow;
+      if (!small) {
+        for (const t of TOOLS) rows[t.act === 'move' || t.act === 'resize' ? 'design' : 'note'].appendChild(toolBtn[t.act]);
+        rows.more.append(collapseBtn, sideBtn, finishBtn);
+        return;
+      }
+      rows.note.appendChild(toolBtn[last]);
+      menu.append(...TOOLS.filter(t => t.act !== last).map(t => toolBtn[t.act]), sideBtn, collapseBtn, finishBtn);
+    }
+
+    /** Collapses the bar by itself when the window can't hold all of it. */
+    function refit() {
+      if (host.style.display === 'none') return;
+      layout(false);
+      narrow = bar.offsetWidth + 24 > document.documentElement.clientWidth;
+      layout();
+      if (!dock.classList.contains('collapsed')) closeMenu();
+    }
+
+    function openMenu() {
+      menu.hidden = false;
+      menuBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeMenu() {
+      menu.hidden = true;
+      menuBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    /** The line above the bar: which step the tester is on, or what went wrong. */
+    function setStep(n, message, error = false) {
+      stepEl.hidden = !message;
+      stepEl.classList.toggle('error', error);
+      stepEl.querySelector('b').textContent = n ?? '';
+      stepEl.querySelector('b').hidden = !n;
+      stepEl.querySelector('span').textContent = message ?? '';
+      stepEl.querySelector('button').hidden = !error;
+    }
+
+    function setCount(n) {
+      count = n;
+      countEl.textContent = String(n);
     }
 
     function finish() {
+      const lbl = finishBtn.querySelector('.lbl');
       if (!finishArmed) {
         finishBtn.classList.add('armed');
-        finishBtn.textContent = 'Click again to close';
+        lbl.textContent = 'Press again';
         finishArmed = setTimeout(() => {
           finishArmed = null;
           finishBtn.classList.remove('armed');
-          finishBtn.textContent = 'Finish';
+          lbl.textContent = 'Finish';
         }, 3000);
         return;
       }
       clearTimeout(finishArmed);
-      finishBtn.textContent = 'Saving…';
+      lbl.textContent = 'Saving…';
       void window.__qaRecorderFinish?.();
     }
 
@@ -305,7 +511,9 @@
       busy = false;
       modeHandler = null;
       onCancel = null;
-      root.querySelectorAll('.layer, .sel, .hint, .form, .handle').forEach(n => n.remove());
+      for (const b of Object.values(toolBtn)) b.setAttribute('aria-pressed', 'false');
+      if (!stepEl.classList.contains('error')) setStep();
+      root.querySelectorAll('.layer, .sel, .leader, .form, .handle').forEach(n => n.remove());
     }
 
     function add(cls, text) {
@@ -321,7 +529,7 @@
     }
 
     function pickRegion() {
-      add('hint', 'Drag a region · Esc to cancel');
+      setStep('Step 1 of 2', 'Drag a box round the area your note is about. Esc cancels.');
       const layer = add('layer');
       const sel = add('sel');
       sel.style.display = 'none';
@@ -342,15 +550,15 @@
         } else if (e.type === 'pointerup' && from) {
           const rect = rectTo(e);
           layer.remove();
-          root.querySelector('.hint')?.remove();
           if (rect.width < 6 || rect.height < 6) return done();
-          openForm(rect, describe(elementAt(rect.x + rect.width / 2, rect.y + rect.height / 2)));
+          const under = elementAt(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          openForm(rect, describe(under), 'The area you marked');
         }
       };
     }
 
     function pickElement() {
-      add('hint', 'Click an element · Esc to cancel');
+      setStep('Step 1 of 2', 'Click the thing your note is about. Esc cancels.');
       const layer = add('layer');
       const sel = add('sel');
       modeHandler = (e, el) => {
@@ -359,10 +567,9 @@
         if (e.type === 'pointermove' && target) place(sel, target.getBoundingClientRect());
         if (e.type !== 'click') return;
         layer.remove();
-        root.querySelector('.hint')?.remove();
         if (!target) return done();
         const r = target.getBoundingClientRect();
-        openForm({ x: r.x, y: r.y, width: r.width, height: r.height }, describe(target));
+        openForm({ x: r.x, y: r.y, width: r.width, height: r.height }, describe(target), sayWhat(target));
       };
     }
 
@@ -370,37 +577,117 @@
       return document.elementsFromPoint(x, y).find(el => el !== host && !host.contains(el)) ?? null;
     }
 
-    function openForm(rect, target) {
+    // ---- the tag ----
+
+    /** Builds the tag dialog. A note has the row of kinds; a layout change has its summary in the head instead. */
+    function tag({ k, about, what, kinds, placeholder, cancel, save }) {
       const form = add('form');
       form.innerHTML = html(`
-        <div class="kinds">${KINDS.map((k, i) => `<button data-kind="${k.id}" aria-pressed="${i === 0}">${k.label}</button>`).join('')}</div>
-        <textarea placeholder="What happened, what did you expect?"></textarea>
-        <div class="actions"><span>Ctrl+Enter to save · Esc to cancel</span>
-          <span><button data-form="cancel">Cancel</button> <button data-form="save" class="save">Save</button></span></div>`);
-      if (rect) place(root.querySelector('.sel') ?? add('sel'), rect);
-      // next to the selection when it fits, else centred
-      const fw = 340, fh = 200;
-      let left = (innerWidth - fw) / 2, top = (innerHeight - fh) / 2;
-      if (rect) {
-        left = Math.min(Math.max(8, rect.x), innerWidth - fw - 8);
-        top = rect.y + rect.height + 8 + fh < innerHeight ? rect.y + rect.height + 8 : Math.max(8, rect.y - fh - 8);
+        <div class="head" title="Drag to move this out of the way"><span class="num"></span>
+          <span class="about"><small></small><strong class="what"></strong></span>${icon('grip')}</div>
+        <div class="body">
+          <div class="field"><textarea class="${kinds ? '' : 'short'}" placeholder="${placeholder}"></textarea>
+          ${kinds ? `<div class="kinds" role="group" aria-label="What kind of note">${KINDS.map(kind => `<button data-kind="${kind.id}" data-k="${kind.id}" aria-pressed="${kind.id === k}"><span class="shape"></span>${kind.label}</button>`).join('')}</div>` : ''}</div>
+          <div class="actions"><span class="keys">Ctrl+Enter saves · Esc ${cancel.esc}</span>
+            <span class="btns"><button data-form="${cancel.id}">${cancel.label}</button><button data-form="${save.id}" class="save">${save.label} ${count + 1}</button></span></div>
+        </div>`);
+      form.dataset.k = k;
+      form.querySelector('.num').textContent = String(count + 1);
+      form.querySelector('small').textContent = about;
+      form.querySelector('.what').textContent = what;
+      return form;
+    }
+
+    /** Gives the selection the tag's number and colour. */
+    function number(sel, k, r) {
+      sel.dataset.k = k;
+      sel.classList.toggle('in', r.y < 32);
+      if (!sel.querySelector('b')) sel.appendChild(document.createElement('b')).textContent = String(count + 1);
+    }
+
+    /** Next to what it is about, clear of it, with a line joining the two; centred when it is about the whole page. */
+    function placeTag(form, r) {
+      root.querySelector('.leader')?.remove();
+      const w = form.offsetWidth, h = form.offsetHeight, gap = 14, m = 8;
+      let left = (innerWidth - w) / 2, top = (innerHeight - h) / 2;
+      if (r) {
+        left = Math.min(Math.max(m, r.x), innerWidth - w - m);
+        const below = r.y + r.height + gap, above = r.y - gap - h;
+        const joined = below + h <= innerHeight - m ? below : above >= m ? above : null;
+        if (joined !== null) {
+          top = joined;
+          const from = Math.max(r.x, left) + 12, to = Math.min(r.x + r.width, left + w) - 12;
+          if (to >= from) {
+            const leader = add('leader');
+            leader.dataset.k = form.dataset.k;
+            Object.assign(leader.style, { left: Math.min(from + 12, to) + 'px', top: (joined === below ? r.y + r.height : top + h) + 'px', height: gap + 'px' });
+          }
+        } else {
+          // no room above or below: beside it, or failing that the top corner
+          top = Math.min(Math.max(m, r.y), innerHeight - h - m);
+          if (r.x + r.width + gap + w <= innerWidth - m) left = r.x + r.width + gap;
+          else if (r.x - gap - w >= m) left = r.x - gap - w;
+          else top = m;
+        }
       }
-      Object.assign(form.style, { left: left + 'px', top: top + 'px' });
+      Object.assign(form.style, { left: Math.max(m, left) + 'px', top: Math.max(m, top) + 'px' });
+    }
+
+    /** Lets the tag be dragged by its head. Returns a handler that says whether it used the event. */
+    function draggable(form) {
+      const head = form.querySelector('.head');
+      let grip = null;
+      return (e, el) => {
+        if (!(el instanceof Element) || !head.contains(el)) return false;
+        if (e.type === 'pointerdown' && e.button === 0) {
+          const r = form.getBoundingClientRect();
+          grip = { x: e.clientX - r.left, y: e.clientY - r.top };
+          head.setPointerCapture(e.pointerId);
+          form.classList.add('dragging');
+        } else if (e.type === 'pointermove' && grip) {
+          form.dataset.moved = '1';
+          root.querySelector('.leader')?.remove();
+          form.style.left = Math.min(Math.max(8, e.clientX - grip.x), innerWidth - form.offsetWidth - 8) + 'px';
+          form.style.top = Math.min(Math.max(8, e.clientY - grip.y), innerHeight - form.offsetHeight - 8) + 'px';
+        } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && grip) {
+          grip = null;
+          form.classList.remove('dragging');
+          form.querySelector('textarea').focus({ preventScroll: true });
+        }
+        return true;
+      };
+    }
+
+    function openForm(rect, target, what) {
+      let kind = KINDS[0].id;
+      const form = tag({
+        k: kind, about: 'Note about', what, kinds: true, placeholder: 'What happened? What did you expect?',
+        cancel: { id: 'cancel', label: 'Cancel', esc: 'cancels' }, save: { id: 'save', label: 'Save note' },
+      });
+      const sel = rect ? root.querySelector('.sel') ?? add('sel') : null;
+      if (sel) {
+        place(sel, rect);
+        number(sel, kind, rect);
+      }
+      placeTag(form, rect);
+      setStep(rect ? 'Step 2 of 2' : null, 'Say what you noticed, then save.');
       const text = form.querySelector('textarea');
       text.focus();
-      let kind = KINDS[0].id;
+      const drag = draggable(form);
 
       modeHandler = (e, el) => {
+        if (drag(e, el)) return;
         if (!(el instanceof Element) || !form.contains(el)) return;
         if (e.type === 'keydown' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return void save();
         if (e.type !== 'click') return;
-        const button = el.closest('button');
-        if (button?.dataset.kind) {
-          kind = button.dataset.kind;
-          form.querySelectorAll('.kinds button').forEach(b => b.setAttribute('aria-pressed', String(b === button)));
+        const pressed = el.closest('button');
+        if (pressed?.dataset.kind) {
+          kind = pressed.dataset.kind;
+          form.querySelectorAll('.kinds button').forEach(b => b.setAttribute('aria-pressed', String(b === pressed)));
+          for (const part of [form, sel, root.querySelector('.leader')]) if (part) part.dataset.k = kind;
           text.focus(); // so typing carries on into the note
-        } else if (button?.dataset.form === 'cancel') done();
-        else if (button?.dataset.form === 'save') void save();
+        } else if (pressed?.dataset.form === 'cancel') done();
+        else if (pressed?.dataset.form === 'save') void save();
       };
 
       async function save() {
@@ -422,6 +709,8 @@
     async function submit(note, before) {
       busy = true;
       host.style.display = 'none';
+      let saved = null;
+      let failure = null;
       try {
         if (before) {
           before.revert();
@@ -433,15 +722,21 @@
           }
         }
         await twoFrames();
-        const saved = await window.__qaRecorderNote(note);
-        countEl.textContent = String(saved.count);
-        toast(`Saved ${note.change ? note.kind : 'note'} ${saved.id}`);
+        saved = await window.__qaRecorderNote(note);
       } catch (err) {
-        toast(`Saving failed: ${err?.message ?? err}`);
+        failure = err?.message ?? String(err);
       } finally {
         host.style.display = '';
         busy = false;
       }
+      if (failure) return setStep('Not saved', `That ${note.change ? 'change' : 'note'} couldn’t be saved (${failure}). Please make it again.`, true);
+      setStep();
+      setCount(saved.count);
+      // the count takes the note's colour for a moment: the number has arrived
+      savedEl.dataset.k = note.change ? 'design' : note.kind;
+      savedEl.classList.remove('stamp');
+      void savedEl.offsetWidth;
+      savedEl.classList.add('stamp');
     }
 
     // ---- design changes: Move and Resize ----
@@ -496,15 +791,16 @@
     /**
      * Move drags an element to where it should go; Resize drags its right and bottom edges. The change is made in
      * the page (inline styles), so the tester sees the result, and stays until the page reloads, so later changes
-     * build on it. Confirm records it with before and after screenshots; Undo or Esc puts the element back.
+     * build on it. Saving records it with before and after screenshots; Undo or Esc puts the element back.
      */
     function designTool(mode) {
-      const hint = add('hint', mode === 'move' ? 'Drag an element to where it should go · Esc to cancel' : 'Click an element to resize · Esc to cancel');
+      setStep('Step 1 of 2', mode === 'move' ? 'Drag something to where it should go. Esc cancels.' : 'Click the thing you want to resize. Esc cancels.');
       const layer = add('layer');
       const sel = add('sel');
       let pick = null;
       let drag = null;
       let panel = null;
+      let panelDrag = null;
       let handles = [];
       onCancel = () => { if (pick) restore(pick); };
 
@@ -527,8 +823,9 @@
           dx: 0, dy: 0, w: before.width, h: before.height,
         };
         sel.classList.add('picked');
+        number(sel, 'design', before);
         layer.classList.toggle('grab', mode === 'move');
-        hint.textContent = mode === 'move' ? 'Drag it again to adjust, then Confirm · Esc to undo' : 'Drag the handles, then Confirm · Esc to undo';
+        setStep('Step 2 of 2', mode === 'move' ? 'Drag it again to adjust, then save the change. Esc undoes it.' : 'Drag the handles, then save the change. Esc undoes it.');
         if (mode === 'resize') {
           handles = ['e', 's', 'se'].map(h => {
             const handle = add('handle');
@@ -551,31 +848,31 @@
       function sync() {
         const r = pick.el.getBoundingClientRect();
         place(sel, r);
+        sel.classList.toggle('in', r.y < 32);
         const at = { e: [r.right, r.top + r.height / 2], s: [r.left + r.width / 2, r.bottom], se: [r.right, r.bottom] };
         for (const handle of handles) {
           const [x, y] = at[handle.dataset.h];
           Object.assign(handle.style, { left: x + 'px', top: y + 'px' });
         }
-        if (panel) panel.querySelector('.what').textContent = summary();
+        if (panel) {
+          panel.querySelector('.what').textContent = summary();
+          panel.querySelector('.what').title = summary();
+        }
       }
 
       function showPanel() {
         if (!panel) {
-          panel = add('form');
-          panel.innerHTML = html(`<div class="what"></div>
-            <textarea class="short" placeholder="Anything the agent should know (optional)"></textarea>
-            <div class="actions"><span>Ctrl+Enter to confirm · Esc to undo</span>
-              <span><button data-form="undo">Undo</button> <button data-form="confirm" class="save">✓ Confirm</button></span></div>`);
+          panel = tag({
+            k: 'design', about: mode === 'move' ? 'Moved' : 'Resized', what: '', kinds: false, placeholder: 'Anything else to say about it? (optional)',
+            cancel: { id: 'undo', label: 'Undo change', esc: 'undoes' }, save: { id: 'confirm', label: 'Save change' },
+          });
+          panelDrag = draggable(panel);
         }
         // a drag moves focus off the note; give it back so typing carries on into it
         panel.querySelector('textarea').focus({ preventScroll: true });
-        // below the element when it fits, else above it, else in the top corner away from the toolbar
-        const r = pick.el.getBoundingClientRect();
-        const fw = 340, fh = 150;
-        const left = Math.min(Math.max(8, r.x), innerWidth - fw - 8);
-        const top = r.bottom + 8 + fh < innerHeight ? r.bottom + 8 : r.top - fh - 8 > 8 ? r.top - fh - 8 : 8;
-        Object.assign(panel.style, { left: left + 'px', top: top + 'px' });
         sync();
+        // follows the element, until the tester puts it somewhere themselves
+        if (!panel.dataset.moved) placeTag(panel, pick.el.getBoundingClientRect());
       }
 
       async function confirm() {
@@ -595,6 +892,7 @@
       }
 
       modeHandler = (e, el) => {
+        if (panelDrag?.(e, el)) return;
         if (panel && el instanceof Element && panel.contains(el)) {
           if (e.type === 'keydown' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) return void confirm();
           if (e.type !== 'click') return;
@@ -647,11 +945,6 @@
           showPanel();
         }
       };
-    }
-
-    function toast(message) {
-      const el = add(`toast ${side}`, message);
-      setTimeout(() => el.remove(), 2000);
     }
   }
 

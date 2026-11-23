@@ -113,7 +113,8 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
           mode: voice, dir, notes, speech, flush,
           // These happen while the tester talks or browses, so they must not touch the page: hiding the toolbar (or
           // Playwright's default of hiding the text cursor) makes the page flash every time. The toolbar shows in a
-          // corner of these screenshots instead; notes the tester captures still leave it out.
+          // corner of these screenshots instead, which is why it starts collapsed in a voice session; notes the
+          // tester captures still leave it out.
           screenshot: file => shownPage().screenshot({ path: file, caret: 'initial' }),
           currentUrl: () => shownPage().url(),
           onNote: n => emitter.emit('note', n),
@@ -151,7 +152,7 @@ export async function startSession(target, { runId, latest = true, exe, log, voi
       controller.voice?.pageChanged(); // the page the tester starts on
       await setStatus('running');
       readyResolve();
-      say('Session running. F8 pick an element · F9 drag a region · F7 general note · Finish on the toolbar when done.');
+      say('Session running. F8 pick an element · F9 mark an area · F7 general note · Finish on the toolbar when done.');
 
       const why = await Promise.race([finishSignal, app.closed]);
       say(why === 'finish' ? 'Finishing...' : 'The app was closed; saving the session.');
