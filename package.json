@@ -17,6 +17,7 @@
   "scripts": {
     "gui": "node src/cli.mjs gui",
     "start": "node src/cli.mjs gui",
+    "lab": "node scripts/toolbar-lab.mjs",
     "test": "node --test test/unit/*.test.mjs",
     "check": "node test/check.mjs",
     "smoke:url": "node test/smoke-url.mjs",

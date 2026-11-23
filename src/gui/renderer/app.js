@@ -412,7 +412,7 @@ function sessionView(s, detail) {
     </div>
     ${s.error ? html`<div class="card"><h3>The session hit an error</h3><pre class="log">${s.error}</pre></div>` : ''}
     ${live ? html`<div class="card"><h3>Live</h3>
-      <p class="muted small">In the app: F8 pick an element · F9 drag a region · F7 general note · ⇄ moves the toolbar · Finish twice ends the session.</p>
+      <p class="muted small">In the app: F8 pick an element · F9 mark an area · F7 general note · Side moves the toolbar · Finish twice ends the session.</p>
       ${mics.has(s.id) ? html`<p class="small"><span class="dot inline"></span> Microphone on (${mics.get(s.id).voice === 'open-mic' ? 'open mic: everything you say is transcribed; 🎙 on the toolbar mutes' : 'push-to-talk: hold F6 in the app, or hold 🎙 on its toolbar'}).</p>` : ''}
       <pre class="log">${(log ?? []).join('\n')}</pre></div>` : ''}
     ${summaryRow(s, detail, errors)}
@@ -627,7 +627,7 @@ function aboutView(a) {
     <div class="card">
       <p>${a.description}</p>
       <p>Pick a target, start a session and use the app as usual. The toolbar in the app takes notes:
-        <b>F7</b> a general note, <b>F8</b> pick an element, <b>F9</b> drag a region, and <b>F6</b> held to talk when push-to-talk is on.
+        <b>F7</b> a general note, <b>F8</b> pick an element, <b>F9</b> mark an area, and <b>F6</b> held to talk when push-to-talk is on.
         Every click, page change and error goes into the session's timeline, and <b>Copy hand-off</b> gives a coding agent everything it needs.</p>
       ${a.repo ? html`<p><button class="btn" data-action="open-repo">Source, issues and docs on GitHub</button> <span class="muted small mono">${a.repo}</span></p>` : ''}
     </div>

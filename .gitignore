@@ -2,3 +2,4 @@ node_modules/
 qa-sessions/
 .demo-home/
 dist/
+.impeccable/

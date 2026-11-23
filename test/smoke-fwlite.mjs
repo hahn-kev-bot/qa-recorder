@@ -66,7 +66,7 @@ await page.keyboard.press('Escape');
 assert.ok(await popupContent.isVisible(), 'popup still open after cancelling a capture');
 
 await toolbar.locator('button[data-act="side"]').click();
-assert.match(await toolbar.getAttribute('class'), /\bright\b/, 'toolbar moved to the right');
+assert.match(await page.locator('#qa-recorder-root .dock').getAttribute('class'), /\bright\b/, 'toolbar moved to the right');
 
 // Finish needs two clicks, then ends the session and closes the app
 await toolbar.locator('button[data-act="finish"]').click();

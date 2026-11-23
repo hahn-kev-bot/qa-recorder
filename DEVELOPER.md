@@ -92,6 +92,20 @@ speech tests share your real model folder.
 CI (`.github/workflows/test.yml`) runs the unit tests, the syntax check, `smoke:url`, `smoke:design` and `smoke:gui` on Windows for
 every pull request and every push to main.
 
+## Working on the toolbar's look
+
+```sh
+npm run lab        # then open http://127.0.0.1:4517/
+```
+
+The lab serves the demo shop with the real `src/core/overlay.js` in your own browser, with stand-ins for the
+recorder: notes are saved nowhere and logged to the console. The page reloads when `overlay.js` changes. Add
+`?open=note` (or `element`, `region`, `move`, `resize`) to come back with that tool started after every reload,
+`?voice=push-to-talk` or `?voice=open-mic` for the microphone button, and `?slow=2000` to stretch a save. The fixture
+pages are under `/fixture/`, such as `/fixture/design.html`.
+
+Screenshots and the real recording path aren't part of it: finish with the smoke tests.
+
 ## Dogfooding
 
 The **QA Recorder (this app)** target runs this checkout's app with its own empty data folder and records it with

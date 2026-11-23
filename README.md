@@ -58,26 +58,33 @@ You also need:
 | Key | Action |
 |---|---|
 | F8 | pick an element, then write a note about it |
-| F9 | drag a region, then write a note about it |
+| F9 | drag a box round an area, then write a note about it |
 | F7 | a general note |
 | F6 (hold) | talk, when push-to-talk is on |
 | Esc | cancel a capture |
 
-Each note has a type (🐛 bug, 👎 dislike, 💡 idea, 👍 like) and your text, and is kept as soon as you save it. ⇄
-moves the toolbar to the other side.
+The toolbar's buttons do the same: **Element**, **Area** and **Note**. A line above the toolbar says what to do next,
+and the note opens as a numbered tag joined to what you picked. Drag the tag by its coloured top if it is in the way.
+
+Each note has a type (bug, dislike, idea, like) and your text, and is kept as soon as you save it: the **Saved** count
+goes up to its number.
+
+**Side** moves the toolbar to the other corner. **Collapse** shrinks it to the tool you used last, the count and a
+**Menu** with everything else, including **Expand**. In a window too narrow for the whole toolbar it collapses by
+itself, and a voice session starts with it collapsed, because the screenshots taken while you talk include it.
 
 ### Design changes (prototype)
 
-Two more toolbar buttons let you show a layout change instead of describing it:
+Two more toolbar buttons, under **Show a layout change**, let you show a change instead of describing it:
 
-- **✥ Move**: drag an element (a button, a card, a link) to where it should go. Drag it again to adjust.
-- **⤡ Resize**: click an element, then drag its right, bottom or corner handle.
+- **Move**: drag an element (a button, a card, a link) to where it should go. Drag it again to adjust.
+- **Resize**: click an element, then drag its right, bottom or corner handle.
 
-Each time, a small panel shows what changed ("button “Renew all”: 140px left, 30px down"). Add a note if you like,
-then **✓ Confirm**; **Undo** or Esc puts the element back. The change stays on the page until it reloads, so the next
+Each time, the tag shows what changed ("button “Renew all”: 140px left, 30px down"). Add a note if you like,
+then **Save change**; **Undo change** or Esc puts the element back. The change stays on the page until it reloads, so the next
 one builds on it.
 
-Each confirmed change is saved as a ✥ Move or ⤡ Resize note with a **before** and an **after** screenshot, the
+Each saved change is kept as a ✥ Move or ⤡ Resize note with a **before** and an **after** screenshot, the
 element's old and new position and size, and, for a move, the element it was dropped on. `feedback.md` shows them
 side by side, `notes.json` has the same as JSON, and `HANDOFF.md` tells the coding agent to make each change in the
 app's own layout (not with the pixel offsets the tool used to show it).
@@ -109,8 +116,8 @@ Whisper; the model (about 80 MB) downloads the first time.
 
 | Mode | How | Result |
 |---|---|---|
-| Push-to-talk | hold F6 in the app, or hold 🎙 on its toolbar | each press becomes a 🎙 Spoken note, with a screenshot from when you pressed |
-| Open mic | just talk; 🎙 on the toolbar mutes | everything you say is transcribed and lands in the timeline, each remark with a screenshot from when you started speaking |
+| Push-to-talk | hold F6 in the app, or hold the microphone button on its toolbar | each press becomes a 🎙 Spoken note, with a screenshot from when you pressed |
+| Open mic | just talk; the microphone button on the toolbar mutes | everything you say is transcribed and lands in the timeline, each remark with a screenshot from when you started speaking |
 
 With open mic the whole session's audio is kept, and the session page plays each remark so you can check it.
 **Re-transcribe** on a finished session runs the recording through a larger, much more accurate model (about 760 MB,
