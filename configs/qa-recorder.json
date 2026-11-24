@@ -16,7 +16,7 @@
     }
   },
   "setup": [
-    { "waitFor": { "role": "button", "name": "＋ New target" }, "timeout": 60000 }
+    { "waitFor": { "role": "button", "name": "New target" }, "timeout": 60000 }
   ],
   "handoff": {
     "workspace": "a checkout of hahn-kev-bot/qa-recorder",

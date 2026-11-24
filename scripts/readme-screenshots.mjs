@@ -47,7 +47,7 @@ const main = win.locator('#main');
 await nav('Leaf & Kettle shop').click();
 
 // a session: the tester browses and leaves notes with the toolbar
-await main.getByRole('button', { name: '▶ Start session' }).click();
+await main.getByRole('button', { name: 'Start session' }).click();
 await main.locator('.badge.running').waitFor({ timeout: 60_000 });
 await page.waitForFunction(() => !!document.getElementById('qa-recorder-root'));
 const toolbar = page.locator('#qa-recorder-root');

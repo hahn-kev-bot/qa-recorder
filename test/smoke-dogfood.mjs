@@ -30,7 +30,7 @@ await page.locator('#sidebar').getByRole('button', { name: 'Storage and cleanup'
 await page.getByText('Shared build').waitFor();
 
 // an element note on the recorded app's New target button
-const button = await page.locator('#sidebar').getByRole('button', { name: '＋ New target' }).boundingBox();
+const button = await page.locator('#sidebar').getByRole('button', { name: 'New target' }).boundingBox();
 await page.keyboard.press('F8');
 await page.mouse.move(button.x + 20, button.y + 8);
 await page.mouse.click(button.x + 20, button.y + 8);
