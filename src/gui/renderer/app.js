@@ -2,8 +2,10 @@
 // Every button has data-action; one click listener dispatches to `actions`.
 'use strict';
 
-const KIND = { bug: '🐛 Bug', dislike: '👎 Dislike', idea: '💡 Idea', like: '👍 Like', spoken: '🎙 Spoken', move: '✥ Move', resize: '⤡ Resize' };
-const VOICE_OPTIONS = [['off', '🔇 No voice'], ['push-to-talk', '🎙 Push-to-talk (F6)'], ['open-mic', '🎙 Open mic']];
+const KIND = { bug: 'Bug', dislike: 'Dislike', idea: 'Idea', like: 'Like', spoken: 'Spoken', move: 'Move', resize: 'Resize' };
+// the colour and shape a kind of note has, here and on the toolbar
+const kindKey = kind => (kind === 'move' || kind === 'resize' ? 'design' : KIND[kind] ? kind : 'spoken');
+const VOICE_OPTIONS = [['off', 'No voice'], ['push-to-talk', 'Push-to-talk (F6)'], ['open-mic', 'Open mic']];
 
 /** The voice choice is remembered per target. localStorage can be unavailable; then it is just not remembered. */
 function voiceFor(targetId) {
@@ -159,6 +161,19 @@ async function api(channel, ...args) {
 }
 
 const spinner = raw('<span class="spinner" aria-hidden="true"></span>');
+const ICONS = {
+  plus: '<path d="M10 4v12M4 10h12"/>',
+  play: '<path d="M6 4l10 6-10 6z"/>',
+  warn: '<path d="M10 3l8 14H2zM10 8v4M10 14.5v.01"/>',
+  check: '<path d="M4 10.5l4 4 8-9"/>',
+  mic: '<rect x="7.5" y="2" width="5" height="10" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0M10 15v3"/>',
+  action: '<path d="M8 5l5 5-5 5"/>',
+  navigate: '<path d="M4 4v5a3 3 0 003 3h9M13 8l4 4-4 4"/>',
+  tab: '<path d="M3 16V5h6l1.5 2H17v9z"/>',
+  note: '<path d="M5 3h7l4 4v10H5z"/><path d="M12 3v4h4M8 11h5M8 14h3"/>',
+  end: '<rect x="5" y="5" width="10" height="10"/>',
+};
+const icon = name => raw(`<svg class="ic" viewBox="0 0 20 20" aria-hidden="true">${ICONS[name]}</svg>`);
 const cleanError = e => String(e.message ?? e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 let toastTimer;
@@ -182,7 +197,24 @@ function ago(iso) {
 }
 const when = iso => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const sha7 = b => (b?.sha && b.sha !== 'local' ? b.sha.slice(0, 7) : b?.source === 'local' ? 'local' : '');
-const kinds = k => Object.entries(k ?? {}).map(([kind, n]) => `${(KIND[kind] ?? kind).split(' ')[0]}${n}`).join(' ');
+// counts per colour: Move and Resize share one
+const KIND_COUNT = { bug: ['bug', 'bugs'], dislike: ['dislike', 'dislikes'], idea: ['idea', 'ideas'], like: ['like', 'likes'], design: ['layout change', 'layout changes'], spoken: ['spoken note', 'spoken notes'] };
+const byKind = k => {
+  const out = {};
+  for (const [kind, n] of Object.entries(k ?? {})) out[kindKey(kind)] = (out[kindKey(kind)] ?? 0) + n;
+  return Object.entries(out);
+};
+const kindMark = key => (key === 'spoken' ? icon('mic') : raw('<i class="shape"></i>'));
+/** What a session holds: one joined strip, a segment per kind, as wide as its count. */
+const kinds = k => html`<span class="strip">${byKind(k).map(([key, n]) =>
+  html`<span data-k="${key}" style="flex:${n}" title="${n} ${KIND_COUNT[key][n === 1 ? 0 : 1]}">${kindMark(key)}${n}</span>`)}</span>`;
+// a target's own colour: a pale tile with its initial. Picked by its place in the list, so the first eight differ.
+const TINTS = ['peach', 'mint', 'sky', 'lilac', 'lemon', 'rose', 'aqua', 'sand'];
+const tint = id => {
+  const i = state.targets.findIndex(t => t.id === id);
+  return TINTS[(i >= 0 ? i : [...String(id)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)) % TINTS.length];
+};
+const tile = (t, big) => html`<span class="tile${big ? ' big' : ''}" data-t="${tint(t.id)}" aria-hidden="true">${(t.name ?? t.id ?? '?').trim().charAt(0).toUpperCase()}</span>`;
 const isLive = s => s.status === 'running' || s.status === 'starting';
 const fileUrl = (sessionId, rel) => `qa-file://session/${encodeURIComponent(sessionId)}/${rel.split('/').map(encodeURIComponent).join('/')}`;
 
@@ -298,9 +330,9 @@ function sidebar() {
     ${state.targets.map(t => html`
       <button class="nav ${v.kind === 'target' && v.id === t.id ? 'on' : ''} ${t.available || t.error ? '' : 'off'}" data-action="go" data-kind="target" data-id="${t.id}"
         title="${t.error ? 'This config is broken' : t.available ? t.description ?? '' : `Not available on ${state.info?.platform}`}">
-        <span class="grow">${t.error ? '⚠ ' : ''}${t.name}</span>${liveByTarget.has(t.id) ? raw('<span class="dot" title="Session running"></span>') : ''}
+        ${t.error ? icon('warn') : tile(t)}<span class="grow">${t.name}</span>${liveByTarget.has(t.id) ? raw('<span class="dot" title="Session running"></span>') : ''}
       </button>`)}
-    <button class="nav ${v.kind === 'new' ? 'on' : ''}" data-action="go" data-kind="new">＋ New target</button>
+    <button class="nav ${v.kind === 'new' ? 'on' : ''}" data-action="go" data-kind="new">${icon('plus')}New target</button>
     <h2>Sessions</h2>
     <button class="nav ${v.kind === 'sessions' ? 'on' : ''}" data-action="go" data-kind="sessions">
       <span class="grow">All sessions</span>${state.sessions.some(isLive) ? raw('<span class="dot"></span>') : ''}
@@ -317,9 +349,9 @@ function sessionsTable(sessions, { showTarget }) {
     ${sessions.map(s => html`
       <tr class="clickable" data-action="go" data-kind="session" data-id="${s.id}">
         <td>${when(s.startedAt)}</td>
-        ${showTarget ? html`<td>${s.target.name}</td>` : ''}
+        ${showTarget ? html`<td><span class="tcell">${tile(s.target)}${s.target.name}</span></td>` : ''}
         <td class="mono">${sha7(s.build)}</td>
-        <td>${s.notes}${s.notes ? html` <span class="muted small">${kinds(s.kinds)}</span>` : ''}</td>
+        <td>${s.notes && s.kinds ? kinds(s.kinds) : s.notes}</td>
         <td>${s.errors ?? ''}</td>
         <td>${mb(s.size)}</td>
         <td><span class="badge ${s.status}">${s.status}</span></td>
@@ -329,7 +361,7 @@ function sessionsTable(sessions, { showTarget }) {
 
 function targetView(t) {
   if (t.error) {
-    return html`<div class="head"><div class="grow"><h1>⚠ ${t.name}</h1><div class="muted small mono">${t.file}</div></div>
+    return html`<div class="head"><div class="grow"><h1>${icon('warn')} ${t.name}</h1><div class="muted small mono">${t.file}</div></div>
       <button class="btn" data-action="edit" data-id="${t.id}">Fix config</button></div>
       <div class="card"><h3>This config doesn't load</h3><pre class="log">${t.error}</pre></div>`;
   }
@@ -341,7 +373,8 @@ function targetView(t) {
   const latestDownloaded = latest?.build && downloads.some(d => d.runId === latest.build.runId);
   const log = state.logs[t.id];
   return html`
-    <div class="head">
+    <div class="head band" data-t="${tint(t.id)}">
+      ${tile(t, true)}
       <div class="grow">
         <h1>${t.name}</h1>
         <div class="muted">${t.description ?? ''}</div>
@@ -354,7 +387,7 @@ function targetView(t) {
       ${running
         ? html`<button class="btn primary" data-action="go" data-kind="session" data-id="${running.id}">View running session</button>`
         : html`<button class="btn primary" data-action="start" data-id="${t.id}" ${!t.available || state.busy[`start:${t.id}`] ? raw('disabled') : ''}
-            title="${t.available ? '' : `This target is for ${t.platforms?.join(', ')}`}">${state.busy[`start:${t.id}`] ? html`${spinner} Starting…` : '▶ Start session'}</button>`}
+            title="${t.available ? '' : `This target is for ${t.platforms?.join(', ')}`}">${state.busy[`start:${t.id}`] ? html`${spinner} Starting…` : html`${icon('play')} Start session`}</button>`}
     </div>
     ${ci ? html`
       <div class="card">
@@ -385,11 +418,13 @@ function sessionView(s, detail) {
   const live = isLive(s);
   const log = state.logs[s.id];
   return html`
-    <div class="head">
+    <div class="head band" data-t="${tint(s.target.id)}">
+      ${tile(s.target, true)}
       <div class="grow">
         <h1>${s.target.name}</h1>
         <div class="muted">${when(s.startedAt)} · <span class="badge ${s.status}">${s.status}</span>
           ${s.build?.sha ? html` · build <span class="mono">${sha7(s.build)}</span> ${s.build.title ?? ''}` : ''}</div>
+        ${facts(s, detail, errors)}
       </div>
       ${live ? html`<button class="btn primary" data-action="finish" data-id="${s.id}">Finish session</button>` : ''}
       <button class="btn" data-action="handoff" data-id="${s.id}" ${notes.length || detail?.speech?.length ? '' : raw('disabled')} title="Copies: Read …/HANDOFF.md and follow it.">Copy hand-off</button>
@@ -403,7 +438,7 @@ function sessionView(s, detail) {
       <button class="btn small-btn" data-action="open" data-path="${s.dir}/timeline.md">timeline.md</button>
       ${detail?.speech?.length ? html`<button class="btn small-btn" data-action="open" data-path="${s.dir}/transcript.md">transcript.md</button>` : ''}
       ${(s.trace ?? []).map((f, i, all) => html`<button class="btn small-btn" data-action="trace" data-id="${s.id}" data-file="${f}" title="Playwright Trace Viewer: network and console, with the timeline as markers">${all.length > 1 ? `trace ${i + 1}` : 'trace'}</button>`)}
-      ${s.audio?.file ? html`<button class="btn small-btn" data-action="play" data-src="${fileUrl(s.id, s.audio.file)}" title="The whole session's audio">▶ all audio</button>` : ''}
+      ${s.audio?.file ? html`<button class="btn small-btn" data-action="play" data-src="${fileUrl(s.id, s.audio.file)}" title="The whole session's audio">${icon('play')} all audio</button>` : ''}
       <button class="btn small-btn" data-action="open" data-path="${s.dir}">folder</button>
       ${detail?.speech?.length && !live ? html`<span class="grow"></span>
         <span class="muted small">${s.transcribedWith ? `Transcribed again with ${s.transcribedWith.split('/').pop()}` : ''}</span>
@@ -413,11 +448,10 @@ function sessionView(s, detail) {
     ${s.error ? html`<div class="card"><h3>The session hit an error</h3><pre class="log">${s.error}</pre></div>` : ''}
     ${live ? html`<div class="card"><h3>Live</h3>
       <p class="muted small">In the app: F8 pick an element · F9 mark an area · F7 general note · Side moves the toolbar · Finish twice ends the session.</p>
-      ${mics.has(s.id) ? html`<p class="small"><span class="dot inline"></span> Microphone on (${mics.get(s.id).voice === 'open-mic' ? 'open mic: everything you say is transcribed; 🎙 on the toolbar mutes' : 'push-to-talk: hold F6 in the app, or hold 🎙 on its toolbar'}).</p>` : ''}
+      ${mics.has(s.id) ? html`<p class="small"><span class="dot inline"></span> Microphone on (${mics.get(s.id).voice === 'open-mic' ? 'open mic: everything you say is transcribed; the microphone button on the toolbar mutes' : 'push-to-talk: hold F6 in the app, or hold the microphone button on its toolbar'}).</p>` : ''}
       <pre class="log">${(log ?? []).join('\n')}</pre></div>` : ''}
-    ${summaryRow(s, detail, errors)}
     ${notesSection(s, notes, remarks(detail), live)}
-    ${timelineCard(s.id, detail?.timeline ?? [], live, state.view.timelineFilter ?? 'all')}`;
+    ${timelineCard(s.id, detail?.timeline ?? [], live, state.view.timelineFilter ?? 'all', notes)}`;
 }
 
 /** Open-mic utterances (push-to-talk ones are notes already). */
@@ -429,19 +463,27 @@ function duration(s) {
   return sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${sec % 60} s`;
 }
 
-function summaryRow(s, detail, errors) {
+/** The session in numbers, as a line in its header; the timeline's filters carry the same counts as buttons. */
+function facts(s, detail, errors) {
   const actions = (detail?.events ?? []).filter(e => e.type === 'action' && !e.setup).length;
-  const voice = { 'open-mic': '🎙 open mic', 'push-to-talk': '🎙 push-to-talk' }[s.voice] ?? (detail?.speech?.length ? '🎙 voice' : '');
-  const stat = (n, one, many, filter) => html`<button class="stat" data-action="timeline-filter" data-filter="${filter}" title="Show in the timeline"><b>${n}</b> ${n === 1 ? one : many}</button>`;
-  return html`<div class="row stats">
-    <span class="stat plain"><b>${duration(s)}</b>${s.endedAt ? '' : ' so far'}</span>
-    ${stat(detail?.notes?.length ?? 0, 'note', 'notes', 'said')}
-    ${remarks(detail).length ? stat(remarks(detail).length, 'spoken remark', 'spoken remarks', 'said') : ''}
-    ${stat(actions, 'action', 'actions', 'actions')}
-    ${stat(s.pages ?? 0, 'page', 'pages', 'pages')}
-    ${stat(errors.length, 'error', 'errors', 'errors')}
-    ${voice ? html`<span class="stat plain">${voice}</span>` : ''}
+  const voice = { 'open-mic': 'open mic', 'push-to-talk': 'push-to-talk' }[s.voice] ?? (detail?.speech?.length ? 'voice' : '');
+  const n = (count, one, many) => html`<span><b>${count}</b> ${count === 1 ? one : many}</span>`;
+  const spoken = remarks(detail).length;
+  return html`<div class="facts">
+    <span><b>${duration(s)}</b>${s.endedAt ? '' : ' so far'}</span>
+    ${n(actions, 'action', 'actions')}
+    ${n(s.pages ?? 0, 'page', 'pages')}
+    ${spoken ? n(spoken, 'spoken remark', 'spoken remarks') : ''}
+    <span class="${errors.length ? 'err' : ''}"><b>${errors.length}</b> ${errors.length === 1 ? 'error' : 'errors'}</span>
+    ${voice ? html`<span>${icon('mic')} ${voice}</span>` : ''}
   </div>`;
+}
+
+/** One chip per kind of note, beside the notes' heading; each shows those notes in the timeline. */
+function kindChips(notes) {
+  const perKind = {};
+  for (const n of notes) perKind[n.kind] = (perKind[n.kind] ?? 0) + 1;
+  return byKind(perKind).map(([key, n]) => html`<button class="stat" data-k="${key}" data-action="timeline-filter" data-filter="said" title="Show in the timeline">${kindMark(key)}<b>${n}</b> ${KIND_COUNT[key][n === 1 ? 0 : 1]}</button>`);
 }
 
 function notesSection(s, notes, spoken, live) {
@@ -449,7 +491,7 @@ function notesSection(s, notes, spoken, live) {
     return html`<div class="empty">${live ? 'Notes and spoken remarks appear here as you make them.' : 'No notes or spoken remarks in this session.'}</div>`;
   }
   return html`
-    ${notes.length ? html`<h3>${notes.length} note${notes.length === 1 ? '' : 's'}</h3><div class="notes">${notes.map(n => noteCard(s.id, n))}</div>` : ''}
+    ${notes.length ? html`<div class="row notes-head"><h3>${notes.length} note${notes.length === 1 ? '' : 's'}</h3>${kindChips(notes)}</div><div class="notes">${notes.map(n => noteCard(s.id, n))}</div>` : ''}
     ${spoken.length ? html`<h3 style="margin-top:16px">${spoken.length} spoken remark${spoken.length === 1 ? '' : 's'} <span class="muted small">(open mic)</span></h3>
       <div class="notes">${spoken.map(x => remarkCard(s, x))}</div>` : ''}`;
 }
@@ -460,20 +502,20 @@ const clockOf = (s, iso) => {
 };
 
 /** Plays a WAV, or (clip: [from, to] seconds) just that part of the session recording via a media fragment. */
-const playButton = (sessionId, audio, label = '▶', clip) =>
-  audio ? html`<button class="btn small-btn play" data-action="play" data-src="${fileUrl(sessionId, audio)}${clip ? `#t=${clip[0]},${clip[1] + 0.3}` : ''}" title="Play what was said">${label}</button>` : '';
+const playButton = (sessionId, audio, label = '', clip) =>
+  audio ? html`<button class="btn small-btn play" data-action="play" data-src="${fileUrl(sessionId, audio)}${clip ? `#t=${clip[0]},${clip[1] + 0.3}` : ''}" title="Play what was said">${icon('play')}${label ? ` ${label}` : ''}</button>` : '';
 
 function remarkCard(s, x) {
   return html`<div class="note">
+    <div class="tag-head" data-k="spoken">${icon('mic')}<span>Said at ${clockOf(s, x.at)}</span><span class="grow"></span>${playButton(s.id, x.audio, 'Play', x.clip)}</div>
     ${x.screenshot ? html`<img src="${fileUrl(s.id, x.screenshot)}" alt="screen when this was said" data-action="zoom" data-src="${fileUrl(s.id, x.screenshot)}">` : ''}
     <div class="body">
-      <div class="row" style="justify-content:space-between"><b>🎙 at ${clockOf(s, x.at)}</b>${playButton(s.id, x.audio, '▶ Play', x.clip)}</div>
       <div class="text">${x.transcribing ? html`${spinner} transcribing…` : `“${x.text}”`}</div>
     </div>
   </div>`;
 }
 
-const TIMELINE_ICON = { action: '›', navigate: '↪', tab: '🗂', error: '⚠', note: '📝', speech: '🎙', end: '■' };
+const TIMELINE_ICON = { action: 'action', navigate: 'navigate', tab: 'tab', error: 'warn', note: 'note', speech: 'mic', end: 'end' };
 const TIMELINE_FILTERS = [
   ['all', 'Everything', () => true],
   ['said', 'Notes & speech', r => r.kind === 'note' || r.kind === 'speech'],
@@ -482,8 +524,12 @@ const TIMELINE_FILTERS = [
   ['errors', 'Errors', r => r.kind === 'error'],
 ];
 
-function timelineCard(sessionId, rows, live, filter) {
+function timelineCard(sessionId, rows, live, filter, notes = []) {
   if (!rows.length) return '';
+  // a note's row wears its kind's colour
+  const kindOf = r => (r.kind === 'note' ? kindKey(notes.find(n => n.id === r.id)?.kind) : '');
+  // the files mark a note's kind with an emoji; here its colour and shape do that
+  const textOf = r => (r.kind === 'note' && r.summary ? `Note ${Number(r.id) || r.id} · ${r.summary.replace(/^[^\p{L}\p{N}]+/u, '')}` : r.text);
   const [, , keep] = TIMELINE_FILTERS.find(f => f[0] === filter) ?? TIMELINE_FILTERS[0];
   const shown = rows.filter(keep);
   return html`<div class="card" style="margin-top:16px" id="timeline-card">
@@ -492,9 +538,9 @@ function timelineCard(sessionId, rows, live, filter) {
       <div class="row chips">${TIMELINE_FILTERS.map(([id, label]) => html`<button class="chip ${id === filter ? 'on' : ''}" data-action="timeline-filter" data-filter="${id}">${label} <span class="muted">${rows.filter(TIMELINE_FILTERS.find(f => f[0] === id)[2]).length}</span></button>`)}</div>
     </div>
     <div class="timeline" id="timeline">${shown.length ? shown.map(r => html`
-      <div class="tl ${r.kind}${r.setup ? ' setup' : ''}">
-        <span class="mono muted">${r.clock}</span><span class="icon">${TIMELINE_ICON[r.kind] ?? '·'}</span>
-        <span>${r.text}${r.setup ? html` <span class="muted small">(setup)</span>` : ''} ${playButton(sessionId, r.audio, '▶', r.clip)}</span>
+      <div class="tl ${r.kind}${r.setup ? ' setup' : ''}" data-k="${kindOf(r)}">
+        <span class="mono muted">${r.clock}</span><span class="icon" data-k="${kindOf(r)}">${kindOf(r) ? kindMark(kindOf(r)) : TIMELINE_ICON[r.kind] ? icon(TIMELINE_ICON[r.kind]) : '·'}</span>
+        <span>${textOf(r)}${r.setup ? html` <span class="muted small">(setup)</span>` : ''} ${playButton(sessionId, r.audio, '', r.clip)}</span>
         ${r.link ? html`<img class="thumb" src="${fileUrl(sessionId, r.link)}" alt="" data-action="zoom" data-src="${fileUrl(sessionId, r.full ?? r.link)}">` : html`<span></span>`}
       </div>`) : html`<div class="muted small">Nothing of this kind in this session.</div>`}
     </div></div>`;
@@ -504,10 +550,10 @@ function noteCard(sessionId, n) {
   const img = n.screenshots.crop ?? n.screenshots.full;
   const t = n.target;
   return html`<div class="note">
+    <div class="tag-head" data-k="${kindKey(n.kind)}"><span class="num">${Number(n.id) || n.id}</span>${n.kind === 'spoken' ? icon('mic') : raw('<i class="shape"></i>')}<span>${KIND[n.kind] ?? n.kind}</span>
+      <span class="grow"></span>${playButton(sessionId, n.audio)}<span class="small">${new Date(n.at).toLocaleTimeString()}</span></div>
     <img src="${fileUrl(sessionId, img)}" alt="screenshot for note ${n.id}" data-action="zoom" data-src="${fileUrl(sessionId, n.screenshots.full)}">
     <div class="body">
-      <div class="row" style="justify-content:space-between"><b>${n.id}. ${KIND[n.kind] ?? n.kind}</b>
-        <span class="row" style="gap:6px">${playButton(sessionId, n.audio)}<span class="muted small">${new Date(n.at).toLocaleTimeString()}</span></span></div>
       ${n.change ? html`<div class="muted small">${designSummary(n.change)}</div>` : ''}
       <div class="text">${n.transcribing ? html`${spinner} transcribing…` : n.text || (n.change ? '' : '(no text)')}</div>
       <div class="muted small mono">${shortUrl(n.url)}</div>
@@ -607,7 +653,7 @@ function updatesCard(u) {
     dev: html`<p class="muted">Running from a source checkout: update with <span class="mono">git pull</span>. The installed app updates itself.</p>`,
     idle: html`<p>Version ${u.current}. ${check}</p>`,
     checking: html`<p>${spinner} Checking for a new version…</p>`,
-    current: html`<p>✓ Version ${u.current} is the newest. ${check}</p>`,
+    current: html`<p>${icon('check')} Version ${u.current} is the newest. ${check}</p>`,
     downloading: html`<p>${spinner} Downloading version ${u.version ?? ''}… ${u.percent ?? 0}%</p>`,
     ready: html`<p>Version ${u.version} is downloaded. <button class="btn primary" data-action="install-update">Restart and update</button></p>
       <p class="muted small">Otherwise it's installed the next time you close QA Recorder.</p>`,
@@ -637,7 +683,7 @@ function aboutView(a) {
       <p class="muted small">Everything stays on this computer: recordings, screenshots and transcripts are never uploaded. Speech is transcribed locally.</p>
     </div>
     <div class="card"><h3>Speech models</h3>
-      <table>${a.speech.map(m => html`<tr><th>${m.label}</th><td>${m.size}</td><td>${m.downloaded ? '✓ downloaded' : html`<span class="muted">downloads when first used</span>`}</td></tr>`)}</table>
+      <table>${a.speech.map(m => html`<tr><th>${m.label}</th><td>${m.size}</td><td>${m.downloaded ? html`${icon('check')} downloaded` : html`<span class="muted">downloads when first used</span>`}</td></tr>`)}</table>
     </div>
     <div class="card"><h3>Versions</h3>
       <table><tr><th>QA Recorder</th><td class="mono">${a.version}</td></tr><tr><th>Electron</th><td class="mono">${a.versions.electron}</td></tr>
@@ -740,7 +786,7 @@ function micView(v) {
       <button class="btn primary" data-action="mic-test" ${v.recording || v.checking || !v.devices ? raw('disabled') : ''}>${v.recording ? html`${spinner} Recording… keep talking` : v.checking ? html`${spinner} Checking…` : '● Record a 4-second test'}</button>
     </div>
     ${r ? html`<div class="card">
-      <h3>${r.ok ? '✓ Sounds usable' : '⚠ Problems found'}</h3>
+      <h3>${icon(r.ok ? 'check' : 'warn')} ${r.ok ? 'Sounds usable' : 'Problems found'}</h3>
       ${r.problems.length ? html`<ul class="errors">${r.problems.map(p => html`<li>${p}</li>`)}</ul>` : ''}
       <p><b>Transcribed:</b> ${r.text ? `“${r.text}”` : html`<span class="muted">(nothing)</span>`}</p>
       <p class="muted small">Your voice is <b>${Math.round(r.snrDb)} dB</b> above the background (clear transcripts need about 15 dB or more) · level ${r.speechLevel.toFixed(3)} · peak ${r.peak.toFixed(2)} · ${(r.highShare * 100).toFixed(1)}% of the speech above 1.5 kHz (clear speech is usually over 5%)</p>

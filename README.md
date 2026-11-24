@@ -36,10 +36,10 @@ You also need:
 
 ## Record a session
 
-1. **Pick a target**, the thing you're testing, in the sidebar. To add one, choose **＋ New target** and paste a
+1. **Pick a target**, the thing you're testing, in the sidebar. To add one, choose **New target** and paste a
    URL, or see [Targets](#targets).
 2. If the target is built in CI, the app shows the newest build: **Download** it, or start with the one you have.
-3. Choose a voice mode next to **▶ Start session** (or no voice) and start. The app or website opens with the toolbar
+3. Choose a voice mode next to **Start session** (or no voice) and start. The app or website opens with the toolbar
    in a bottom corner.
 4. Use it as you normally would, and leave a note whenever something is wrong, odd, or good.
 5. **Finish** on the toolbar (press it twice), or close the app or browser.
@@ -96,7 +96,7 @@ node src/cli.mjs start --url examples/snapshot-demo.html   # a made-up library p
 node src/cli.mjs start --url path/to/saved-page.html       # any page you saved, e.g. with the SingleFile extension
 ```
 
-In the app, paste the file's path under **＋ New target**.
+In the app, paste the file's path under **New target**.
 
 The toolbar doesn't disturb the page: an open popup or menu stays open while you take a note about it.
 
@@ -136,7 +136,7 @@ A target says what to test and how to start it. The smallest one is a website:
 { "name": "Docs site", "launch": { "type": "browser", "url": "https://docs.example.org" } }
 ```
 
-Make one in the app (**＋ New target**) in either of two ways:
+Make one in the app (**New target**) in either of two ways:
 
 - **Paste a URL**, for a website.
 - **Copy AI prompt**, give the prompt to an AI, answer its questions, and paste the JSON it writes. The editor

@@ -1,17 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- QA Recorder: a feedback note with a check, and the red "recording" dot -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#334155"/>
-      <stop offset="1" stop-color="#111827"/>
-    </linearGradient>
-  </defs>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
-  <!-- speech bubble: the tester's note -->
-  <path d="M60 64h112a24 24 0 0 1 24 24v64a24 24 0 0 1-24 24h-58l-34 30v-30h-20a24 24 0 0 1-24-24v-64a24 24 0 0 1 24-24z" fill="#f9fafb"/>
-  <!-- check mark: QA -->
-  <path d="M84 120l24 24 44-46" fill="none" stroke="#16a34a" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- recording dot -->
-  <circle cx="192" cy="64" r="34" fill="#111827"/>
-  <circle cx="192" cy="64" r="26" fill="#ef4444"/>
+  <!-- QA Recorder: a tester's note with a check, drawn as the app draws it (an ink line on paper, a coloured head),
+       with the red "recording" dot. The pale rim keeps the ink line visible on a dark taskbar. -->
+  <g fill="#fffdf7" stroke="#fffdf7" stroke-width="30" stroke-linejoin="round">
+    <rect x="37" y="50" width="188" height="180" rx="30"/>
+    <rect x="27" y="40" width="188" height="180" rx="30"/>
+    <circle cx="203" cy="52" r="28" fill="#fffdf7" stroke="#fffdf7" stroke-width="26"/>
+  </g>
+  <!-- the hard shadow of a comic panel -->
+  <rect x="37" y="50" width="188" height="180" rx="30" fill="#14181f" stroke="#14181f" stroke-width="14"/>
+  <!-- the note: paper, with the blue head of an Idea -->
+  <clipPath id="card"><rect x="27" y="40" width="188" height="180" rx="30"/></clipPath>
+  <g clip-path="url(#card)">
+    <rect x="27" y="40" width="188" height="180" fill="#fffdf7"/>
+    <rect x="27" y="40" width="188" height="66" fill="#1f6feb"/>
+    <rect x="27" y="99" width="188" height="14" fill="#14181f"/>
+  </g>
+  <rect x="27" y="40" width="188" height="180" rx="30" fill="none" stroke="#14181f" stroke-width="14"/>
+  <!-- check mark: QA, in the green of a Like -->
+  <path d="M82 164l27 27 52-56" fill="none" stroke="#157a40" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- recording dot, with a paper keyline that lifts it off the note -->
+  <circle cx="203" cy="52" r="28" fill="#fffdf7" stroke="#fffdf7" stroke-width="20"/>
+  <circle cx="203" cy="52" r="28" fill="#d92d20" stroke="#14181f" stroke-width="10"/>
 </svg>

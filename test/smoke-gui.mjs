@@ -49,7 +49,7 @@ assert.match(await main.locator('#build-choice option:checked').textContent(), /
 assert.equal(await main.locator('#build-choice option').count(), 1, 'no "download the latest" choice in the list');
 
 // --- a target from a URL, with live validation
-await nav('＋ New target').click();
+await nav('New target').click();
 // a bare host, as people type it, submitted with Enter
 await win.locator('#new-url').fill(site.url.replace('http://', ''));
 await win.locator('#new-url').press('Enter');
@@ -72,7 +72,7 @@ await main.getByRole('heading', { name: 'Fixture shop' }).waitFor();
 await fs.access(path.join(home, 'targets', 'fixture.json'));
 
 // --- start a browser session from the GUI, finish it from the GUI
-await main.getByRole('button', { name: '▶ Start session' }).click();
+await main.getByRole('button', { name: 'Start session' }).click();
 await main.getByRole('button', { name: 'Finish session' }).waitFor();
 await main.locator('.badge.running').waitFor({ timeout: 60_000 });
 await main.getByRole('button', { name: 'Finish session' }).click();
@@ -85,7 +85,7 @@ const browser = await chromium.launch({ channel: 'msedge', headless: false, args
   .catch(() => chromium.launch({ channel: 'chrome', headless: false, args: [`--remote-debugging-port=${port}`] }));
 const page = await browser.newPage();
 await page.goto('about:blank');
-await nav('＋ New target').click();
+await nav('New target').click();
 await win.locator('#target-id').fill('fixture-cdp');
 await json.fill(JSON.stringify({
   name: 'Fixture over CDP',

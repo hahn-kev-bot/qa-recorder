@@ -41,7 +41,7 @@ const nav = name => win.locator('#sidebar').getByRole('button', { name });
 async function start(voice) {
   await nav('Voice fixture').click();
   await win.locator('#voice-choice').selectOption(voice);
-  await main.getByRole('button', { name: '▶ Start session' }).click();
+  await main.getByRole('button', { name: 'Start session' }).click();
   await main.locator('.badge.running').waitFor({ timeout: 60_000 });
   await main.getByText('Microphone on').waitFor();
   return (await main.locator('.path').textContent()).trim();
@@ -107,14 +107,14 @@ assert.match(handoff, /transcript\.md/);
 // the session page: remarks as cards with audio, a summary, and a timeline filter
 const remark = main.locator('.note').filter({ hasText: /search button does nothing/i }).first();
 await remark.waitFor();
-await main.locator('.stats').getByText(/spoken remarks?/).waitFor();
-await main.locator('.stats').getByText('🎙 open mic').waitFor();
+await main.locator('.facts').getByText(/spoken remarks?/).waitFor();
+await main.locator('.facts').getByText('open mic').waitFor();
 // a remark plays its own part of the session recording
-const playSrc = await remark.getByRole('button', { name: '▶ Play' }).getAttribute('data-src');
+const playSrc = await remark.getByRole('button', { name: 'Play' }).getAttribute('data-src');
 const clipStart = Number(/#t=([\d.]+),/.exec(playSrc)[1]);
-await remark.getByRole('button', { name: '▶ Play' }).click();
+await remark.getByRole('button', { name: 'Play' }).click();
 await win.waitForFunction(from => state.audio && !state.audio.clip.paused && state.audio.clip.currentTime > from + 0.2, clipStart, { timeout: 10_000 });
-await remark.getByRole('button', { name: '▶ Play' }).click(); // stops it
+await remark.getByRole('button', { name: 'Play' }).click(); // stops it
 await main.locator('.chip', { hasText: 'Notes & speech' }).click();
 const kinds = await main.locator('#timeline .tl').evaluateAll(rows => rows.map(r => r.className));
 assert.ok(kinds.length >= 2 && kinds.every(k => /\bspeech\b|\bnote\b/.test(k)), `only notes and speech shown (${kinds})`);
@@ -133,7 +133,7 @@ await win.waitForFunction(() => parseFloat(document.getElementById('meter-bar')?
 await main.getByRole('button', { name: '● Record a 4-second test' }).click();
 await main.getByText(/Sounds usable|Problems found/).waitFor({ timeout: 60_000 });
 // the fixture is clear speech: it must pass, and be heard as words from it
-assert.match(await main.textContent(), /✓ Sounds usable/);
+assert.match(await main.textContent(), /Sounds usable/);
 assert.match(await main.textContent(), /Transcribed: “.*(search|button|click|filter|remember|choice).*”/i);
 assert.match(await main.textContent(), /% of the speech above 1\.5 kHz/);
 
@@ -144,7 +144,7 @@ await page.keyboard.down('F6');
 await page.waitForTimeout(6000); // longer than the loop's pause, so the press holds at least part of a sentence
 await page.keyboard.up('F6');
 const note = main.locator('.note').first();
-await note.getByText('🎙 Spoken').waitFor({ timeout: 15_000 });
+await note.getByText('Spoken').waitFor({ timeout: 15_000 });
 await note.locator('.text').filter({ hasText: /\w{3,}/ }).filter({ hasNotText: 'transcribing' }).waitFor({ timeout: 60_000 });
 await finish();
 const notes = JSON.parse(await fs.readFile(path.join(pttDir, 'notes.json'), 'utf8'));
